@@ -1,1 +1,2 @@
-models/*.onnx filter=lfs diff=lfs merge=lfs -text
+# 模型改为普通 git 文件存储：GitHub Pages 不解析 LFS，会把 LFS 指针当文件发。
+# 各 .onnx 均 <100MB，可直接常规存储。
