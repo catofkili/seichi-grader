@@ -1,0 +1,15 @@
+# 本地验收素材不得进入公开发布包
+/test-anime*
+/test-izu-*
+/test-dusk.jpg
+/test-water.jpg
+/test-photo-fake.jpg
+/web-photo-*.jpg
+/work/
+
+# 本机模型转换环境
+/.venv-convert/
+
+# Python/Node 缓存
+__pycache__/
+*.pyc

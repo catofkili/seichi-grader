@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0e1014" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="巡礼调色" />
+  <title>聖地巡礼 · 调色对比生成器</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="./icon-180.png" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="top-inner">
+      <div class="brand">
+        <span class="logo">聖</span>
+        <div class="brand-text">
+          <h1>聖地巡礼 · 调色对比生成器</h1>
+          <p class="sub">提取动画截图的影调与配色，套用到实景照片</p>
+        </div>
+      </div>
+      <nav class="top-nav">
+        <span class="tag">CDF 影调 · MKL 色彩</span>
+        <span class="tag">可导出 .cube LUT</span>
+      </nav>
+    </div>
+  </header>
+
+  <div class="page">
+  <main class="layout">
+    <!-- 左：输入区 -->
+    <section class="panel inputs">
+      <div class="drop" id="dropAnime">
+        <input type="file" id="fileAnime" accept="image/jpeg,image/png,image/webp,.heic,.heif" hidden />
+        <div class="drop-inner">
+          <strong>① 动画截图（取风格）</strong>
+          <span class="hint">点击或拖入 · 提供配色与影调参考</span>
+        </div>
+        <img class="thumb" id="thumbAnime" alt="" hidden />
+      </div>
+      <label class="check compact">
+        <input type="checkbox" id="ignoreSub" checked />
+        <span>忽略底部字幕带</span>
+      </label>
+
+      <div class="drop" id="dropPhoto">
+        <input type="file" id="filePhoto" accept="image/jpeg,image/png,image/webp,.heic,.heif" hidden />
+        <div class="drop-inner">
+          <strong>② 实景照片（被调色）</strong>
+          <span class="hint">点击或拖入 · 将被套上动画的色调</span>
+        </div>
+        <img class="thumb" id="thumbPhoto" alt="" hidden />
+      </div>
+
+      <div class="palette-box">
+        <label>动画主色调色板</label>
+        <div class="palette" id="palette"></div>
+      </div>
+
+      <div class="extract-box">
+        <label>角色提取（实验）</label>
+        <button id="btnExtract" class="ghost" disabled>扒取人物（纯算法·秒开）</button>
+        <button id="btnExtractAI" class="ghost ai" disabled>AI 抠角色（检测＋抠图 · 首次下 ~127MB）</button>
+        <button id="btnLasso" class="ghost" disabled>圈选抠角色（AI 找不到时手动圈）</button>
+        <label class="check">
+          <input type="checkbox" id="hiresDet" />
+          <span>远景小人模式（更慢 · 找小角色）</span>
+        </label>
+        <label class="check" id="mobileSamRow" hidden>
+          <input type="checkbox" id="mobileSam" />
+          <span>iPhone/iPad 高质量 SAM（远景更强 · 高内存）</span>
+        </label>
+        <div class="char-chips" id="charChips" hidden></div>
+        <label class="check">
+          <input type="checkbox" id="composite" checked />
+          <span>叠加到实景场景（可拖拽角色）</span>
+        </label>
+        <label class="mini">抠图阈值 <span id="maskThrVal">110</span></label>
+        <input type="range" id="maskThr" min="40" max="200" value="110" />
+        <label class="mini">边缘收紧（去背景晕边）<span id="maskErodeVal">0px</span></label>
+        <input type="range" id="maskErode" min="0" max="10" value="0" />
+        <label class="mini">角色大小 <span id="charScaleVal">82%</span></label>
+        <input type="range" id="charScale" min="15" max="160" value="82" />
+        <label class="mini">光照融合 <span id="harmonizeVal">35%</span></label>
+        <input type="range" id="harmonize" min="0" max="70" value="35" />
+        <label class="mini">落地阴影 <span id="shadowVal">25%</span></label>
+        <input type="range" id="shadow" min="0" max="60" value="25" />
+        <label class="mini">阴影方向 <span id="shadowOffsetVal">0%</span></label>
+        <input type="range" id="shadowOffset" min="-50" max="50" value="0" />
+        <label class="mini">颗粒匹配 <span id="grainVal">12%</span></label>
+        <input type="range" id="grain" min="0" max="40" value="12" />
+        <div class="extract-status" id="extractStatus">先上传动画截图</div>
+      </div>
+    </section>
+
+    <!-- 中：预览区 -->
+    <section class="panel preview">
+      <div class="align-bar" id="alignBar" hidden>
+        <span class="align-tip">拖拽照片对准虚影</span>
+        <label class="mini inline">缩放 <span id="alignZoomVal">100%</span></label>
+        <input type="range" id="alignZoom" min="100" max="300" value="100" />
+        <label class="mini inline">虚影 <span id="alignOpacityVal">50%</span></label>
+        <input type="range" id="alignOpacity" min="15" max="85" value="50" />
+        <button id="btnAlignApply" class="primary small">应用裁剪</button>
+        <button id="btnAlignReset" class="small" hidden>恢复整幅</button>
+        <button id="btnAlignCancel" class="small">取消</button>
+      </div>
+      <div class="compare" id="compare">
+        <canvas id="canvasGraded"></canvas>
+        <div class="compare-clip" id="clip">
+          <canvas id="canvasOrig"></canvas>
+        </div>
+        <div class="handle" id="handle"><span></span></div>
+        <img id="alignGhost" alt="" hidden />
+        <div class="badge left">原图</div>
+        <div class="badge right">调色后</div>
+        <div class="empty" id="emptyHint">上传两张图片后将在此预览前后对比</div>
+      </div>
+      <div class="preview-actions">
+        <button id="btnAlign" class="ghost small" disabled>构图对齐</button>
+      </div>
+    </section>
+
+    <!-- 右：控制区 -->
+    <section class="panel controls">
+      <div class="ctrl-group">
+        <label>迁移模式</label>
+        <select id="mode">
+          <option value="tone" selected>影调+色彩（推荐）</option>
+          <option value="full">完整迁移（明度+色彩）</option>
+          <option value="chroma">仅色彩（保留实景明度·更自然）</option>
+        </select>
+      </div>
+
+      <label class="check">
+        <input type="checkbox" id="skyRegion" checked />
+        <span>天空分区迁移</span>
+      </label>
+
+      <div class="ctrl-group">
+        <label>强度 <span id="strengthVal">85%</span></label>
+        <input type="range" id="strength" min="0" max="100" value="85" />
+      </div>
+
+      <div class="ctrl-group">
+        <label>饱和度 <span id="satBoostVal">15%</span></label>
+        <input type="range" id="satBoost" min="0" max="50" value="15" />
+      </div>
+
+      <div class="ctrl-group">
+        <label>辉光 <span id="bloomVal">25%</span></label>
+        <input type="range" id="bloom" min="0" max="60" value="25" />
+      </div>
+
+      <div class="ctrl-group">
+        <label>对比布局导出</label>
+        <select id="layout">
+          <option value="updown">上下对比（动画 / 实景）</option>
+          <option value="leftright">左右对比</option>
+          <option value="triple">三联（动画 · 原图 · 调色）</option>
+        </select>
+      </div>
+
+      <div class="ctrl-group preset-box">
+        <label>风格预设（保存在本机）</label>
+        <div class="preset-row">
+          <select id="presetSelect"><option value="">选择预设…</option></select>
+          <button id="btnPresetApply" class="small">应用</button>
+        </div>
+        <div class="preset-row">
+          <input id="presetName" maxlength="30" placeholder="例如：摇曳露营·伊豆" />
+          <button id="btnPresetSave" class="small">保存</button>
+          <button id="btnPresetDelete" class="small" disabled>删除</button>
+        </div>
+        <div class="export-note">当前参数会自动恢复；图片不会写入浏览器存储。</div>
+      </div>
+
+      <div class="model-cache">
+        <div id="modelCacheStatus">正在检查 AI 模型缓存…</div>
+        <button id="btnCacheModels" class="small">缓存全部 AI 模型</button>
+        <div id="deviceStatus" class="export-note"></div>
+      </div>
+
+      <div class="actions">
+        <button id="btnExportImg" class="primary" disabled>导出调色图</button>
+        <button id="btnShareImg" class="primary" hidden>保存到照片 / 分享</button>
+        <button id="btnExportCompare" disabled>导出对比图</button>
+        <button id="btnExportLut" disabled>导出高精度 .cube LUT</button>
+      </div>
+
+      <div class="export-note">65³ LUT 含影调/色彩/饱和度；不含天空分区与辉光。</div>
+
+      <div class="status" id="status">等待上传…</div>
+    </section>
+  </main>
+  </div>
+
+  <div id="lassoModal" class="lasso-modal" hidden>
+    <div class="lasso-head">
+      <span>在截图上圈出要抠的角色——随手画个圈就行，不必精确贴边</span>
+      <div class="lasso-actions">
+        <button id="btnLassoRun" class="primary small" disabled>抠取圈选区域</button>
+        <button id="btnLassoClear" class="small">重画</button>
+        <button id="btnLassoClose" class="small">关闭</button>
+      </div>
+    </div>
+    <div class="lasso-stage"><canvas id="lassoCanvas"></canvas></div>
+  </div>
+
+  <script type="module" src="./app.js?v=20260712g"></script>
+</body>
+</html>

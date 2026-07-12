@@ -1,0 +1,15 @@
+{
+  "name": "圣地巡礼调色生成器",
+  "short_name": "巡礼调色",
+  "description": "将动画截图的影调与配色迁移到实景巡礼照片",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0e1014",
+  "theme_color": "#0e1014",
+  "orientation": "any",
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" },
+    { "src": "./icon-180.png", "sizes": "180x180", "type": "image/png", "purpose": "any" }
+  ]
+}

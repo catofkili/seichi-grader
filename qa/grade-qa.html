@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>调色升级 · 开发验收</title>
+  <style>
+    :root { color-scheme: dark; font-family: -apple-system, "PingFang SC", sans-serif; }
+    body { margin: 0; background: #0e1014; color: #e8ebf1; }
+    main { max-width: 1440px; margin: auto; padding: 24px; }
+    h1 { margin: 0 0 6px; font-size: 22px; }
+    .sub { color: #929bad; margin: 0 0 20px; }
+    #summary { padding: 12px 14px; border: 1px solid #303745; border-radius: 10px; margin-bottom: 14px; }
+    table { border-collapse: collapse; width: 100%; background: #171a21; }
+    th, td { border: 1px solid #303745; padding: 9px 10px; text-align: left; font-size: 13px; }
+    th { color: #9ba5b7; }
+    .pass { color: #58d68d; } .fail { color: #ff718f; } .warn { color: #f5c86a; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 18px; }
+    figure { margin: 0; padding: 10px; background: #171a21; border: 1px solid #303745; border-radius: 12px; }
+    figcaption { color: #abb4c4; font-size: 12px; margin-bottom: 8px; }
+    canvas { display: block; width: 100%; height: auto; background: #111; }
+    @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>调色升级 · 自动验收</h1>
+    <p class="sub">真实仓库素材、数值断言、LUT 回验与 1400px 性能。刷新页面即可重跑。</p>
+    <div id="summary">测试运行中…</div>
+    <table>
+      <thead><tr><th>项目</th><th>结果</th><th>测量值</th><th>验收线</th></tr></thead>
+      <tbody id="results"></tbody>
+    </table>
+    <section class="grid">
+      <figure><figcaption>动画目标（忽略底部 12% 字幕）</figcaption><canvas id="target"></canvas></figure>
+      <figure><figcaption>源图</figcaption><canvas id="source"></canvas></figure>
+      <figure><figcaption>旧版 Reinhard 基线</figcaption><canvas id="baseline"></canvas></figure>
+      <figure><figcaption>新版：CDF + 天空分区 + MKL + 饱和度 + Bloom</figcaption><canvas id="graded"></canvas></figure>
+      <figure><figcaption>源图天空掩膜（白色=天空）</figcaption><canvas id="sourceMask"></canvas></figure>
+      <figure><figcaption>目标天空掩膜（白色=天空）</figcaption><canvas id="targetMask"></canvas></figure>
+    </section>
+  </main>
+  <script type="module" src="./grade-qa.js?qa=20260712r"></script>
+</body>
+</html>
