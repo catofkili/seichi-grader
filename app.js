@@ -7,6 +7,7 @@ import { extractForeground, cutoutCanvas, cleanupAlpha, alphaBBox } from './segm
 import { extractForegroundAI, extractCharactersAI, extractCharactersInRegion, mergeCharacterAlphas } from './ai-segment.js';
 import { releaseAllSessions } from './ort-env.js';
 import { profile as DEVICE } from './platform.js';
+import { launchViewfinder } from './camera/viewfinder.js';
 
 const IS_MOBILE = DEVICE.isMobile;
 const MAX_DIM = DEVICE.previewMax;
@@ -1318,7 +1319,42 @@ $('btnLassoRun').addEventListener('click', async () => {
   c.addEventListener('pointercancel', end);
 })();
 
-window.__qa = { state, renderFullRes, enterAlignMode, applyAlignCrop, alignState, recompute, runLassoBox };
+// ---------- 现场取景拍摄 ----------
+// 摄像头拍出的 canvas 是全分辨率（grabFrame ~8.7MP / takePhoto 12MP）。
+// 转成与 fileToImageData 同构的数据：全图 blob 作 srcUrl（全分辨率导出重放用），
+// 另降到 MAX_DIM 作预览 imgData。
+async function canvasToPhotoData(canvas) {
+  const ow = canvas.width, oh = canvas.height;
+  const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.95));
+  const url = URL.createObjectURL(blob);
+  const scale = Math.min(1, MAX_DIM / Math.max(ow, oh));
+  const w = Math.round(ow * scale), h = Math.round(oh * scale);
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  c.getContext('2d').drawImage(canvas, 0, 0, w, h);
+  return {
+    imgData: c.getContext('2d').getImageData(0, 0, w, h), width: w, height: h, url,
+    originalWidth: ow, originalHeight: oh, fileName: 'seichi-shot.jpg',
+  };
+}
+
+$('btnShoot').addEventListener('click', async () => {
+  if (!state.anime) { setStatus('请先上传动画截图，取景时叠加它做参考'); return; }
+  const btn = $('btnShoot'); btn.disabled = true;
+  try {
+    const canvas = await launchViewfinder(state.anime.imgData);
+    if (canvas) {
+      const data = await canvasToPhotoData(canvas);
+      $('thumbPhoto').src = data.url; $('thumbPhoto').hidden = false;
+      await handlePhotoData(data);
+    }
+  } catch (e) {
+    console.error(e); setStatus('取景失败：' + (e.message || e));
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+window.__qa = { state, renderFullRes, enterAlignMode, applyAlignCrop, alignState, recompute, runLassoBox, launchViewfinder };
 
 // 隐藏的开发验收入口：http://localhost:8126/?qa-demo=1
 if (new URLSearchParams(location.search).has('qa-demo')) {

@@ -273,3 +273,16 @@ button.small { padding: 5px 12px; font-size: 12px; border-radius: 8px; }
 .lasso-actions { display: flex; gap: 8px; }
 .lasso-stage { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 0 12px 12px; }
 #lassoCanvas { max-width: 100%; max-height: 100%; touch-action: none; cursor: crosshair; border-radius: 8px; }
+
+/* 相机探针入口（临时诊断用） */
+.probe-entry {
+  display: block; text-align: center; margin: 0 0 10px;
+  padding: 11px 14px; border-radius: 10px;
+  background: #1c2740; border: 1px solid #2f6df0; color: #9db4ff;
+  font-size: 14px; text-decoration: none;
+}
+.probe-entry:active { background: #24345a; }
+
+/* 现场取景按钮 */
+.shoot-btn { width: 100%; margin: 8px 0 0; border-color: #2f6df0; color: #9db4ff; }
+.shoot-btn:not(:disabled):active { background: #1c2740; }

@@ -13,3 +13,6 @@
 # Python/Node 缓存
 __pycache__/
 *.pyc
+
+# macOS
+.DS_Store

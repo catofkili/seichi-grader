@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#0e1014" />
+<title>相机能力探针 · seichi-grader</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0e1014; color: #e7ebf2;
+    font: 15px/1.6 -apple-system, "PingFang SC", "Noto Sans CJK SC", sans-serif;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  header { padding: 16px; border-bottom: 1px solid #232a36; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: #8b93a3; font-size: 13px; }
+  main { padding: 12px 14px 40px; max-width: 720px; margin: 0 auto; }
+  .card { background: #161b24; border: 1px solid #232a36; border-radius: 12px; margin: 12px 0; overflow: hidden; }
+  .card h2 { font-size: 14px; margin: 0; padding: 10px 14px; background: #1b2230; letter-spacing: .04em; }
+  .card .body { padding: 6px 14px 12px; }
+  .kv { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px solid #1d232f; font-size: 13.5px; }
+  .kv:last-child { border-bottom: 0; }
+  .kv .k { color: #8b93a3; flex: 0 0 auto; }
+  .kv .v { text-align: right; word-break: break-word; font-variant-numeric: tabular-nums; }
+  .v.ok { color: #63d29b; } .v.no { color: #ff6b6b; } .v.warn { color: #ffcf6b; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 14px 14px; }
+  button {
+    appearance: none; border: 1px solid #2f6df0; background: #2f6df0; color: #fff;
+    font-size: 14px; padding: 10px 16px; border-radius: 10px; cursor: pointer; touch-action: manipulation;
+  }
+  button.ghost { background: transparent; color: #9db4ff; }
+  button:disabled { opacity: .4; }
+  video { width: 100%; border-radius: 8px; background: #000; display: block; }
+  canvas { display: none; }
+  pre { white-space: pre-wrap; word-break: break-word; background: #0a0d12; border: 1px solid #232a36; border-radius: 8px; padding: 10px; font-size: 12px; color: #b9c2d0; margin: 0 14px 14px; }
+  .banner { padding: 12px 14px; border-radius: 10px; margin: 12px 0; font-size: 13.5px; }
+  .banner.bad { background: #3a1d20; border: 1px solid #6b2b2f; color: #ffb3b3; }
+  .banner.good { background: #16302a; border: 1px solid #2b6b52; color: #9be6c4; }
+  .hint { color: #6d7686; font-size: 12px; padding: 0 14px 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>相机能力探针</h1>
+  <div class="sub">决定「现场取景」功能的架构。在 iPhone 和安卓上各跑一次，点最下方「复制全部结果」发回。</div>
+</header>
+<main>
+  <div id="secureBanner"></div>
+
+  <div class="card">
+    <h2>环境 / 运行上下文</h2>
+    <div class="body" id="envBody"></div>
+  </div>
+
+  <div class="card">
+    <h2>① 摄像头 — 点击开始（会弹权限）</h2>
+    <div class="actions">
+      <button id="btnStart">开始后置摄像头</button>
+      <button id="btnStartFront" class="ghost">前置</button>
+      <button id="btnStop" class="ghost" disabled>停止</button>
+    </div>
+    <div class="hint">HTTPS 或 localhost 才能启动。局域网 http:// 会失败——这正是要验证的先决条件。</div>
+    <div class="body" id="camBody"></div>
+  </div>
+
+  <video id="video" playsinline muted autoplay hidden></video>
+  <canvas id="canvas"></canvas>
+
+  <div class="card">
+    <h2>② 轨道能力（变焦 / 手电筒 / 对焦…）</h2>
+    <div class="body" id="capBody"><div class="kv"><span class="k">状态</span><span class="v">先启动摄像头</span></div></div>
+  </div>
+
+  <div class="card">
+    <h2>③ 静态拍照（三级降级实测）</h2>
+    <div class="actions">
+      <button id="btnPhoto" disabled>测试 takePhoto()</button>
+      <button id="btnGrab" class="ghost" disabled>测试 grabFrame()</button>
+      <button id="btnVideoFrame" class="ghost" disabled>测试 视频帧抓取</button>
+    </div>
+    <div class="body" id="shotBody"><div class="kv"><span class="k">状态</span><span class="v">先启动摄像头</span></div></div>
+  </div>
+
+  <div class="card">
+    <h2>④ 系统相机（C 级兜底）</h2>
+    <div class="actions">
+      <label style="display:inline-block">
+        <input id="fileCap" type="file" accept="image/*" capture="environment" hidden />
+        <button id="btnSysCam" type="button">调用系统相机拍一张</button>
+      </label>
+    </div>
+    <div class="hint">⬆️ 这一项要你手动点：验证系统相机返回照片的真实像素 + 是否 HEIC 格式（决定要不要加 HEIC 解码）。拍完选「使用照片」。</div>
+    <div class="body" id="sysBody"></div>
+  </div>
+
+  <div class="card">
+    <h2>⑤ 陀螺仪 / 方向传感器</h2>
+    <div class="actions"><button id="btnOrient" class="ghost">请求方向权限</button></div>
+    <div class="body" id="orientBody"><div class="kv"><span class="k">状态</span><span class="v">未测试</span></div></div>
+  </div>
+
+  <div class="card">
+    <h2>⑥ 镜头列表（enumerateDevices）</h2>
+    <div class="body" id="devBody"><div class="kv"><span class="k">状态</span><span class="v">授权摄像头后才有标签</span></div></div>
+  </div>
+
+  <div class="actions" style="padding:14px">
+    <button id="btnCopy">复制全部结果</button>
+    <button id="btnShare" class="ghost" hidden>分享结果</button>
+  </div>
+  <pre id="dump">（测试结果的机器可读快照会显示在这里）</pre>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const results = { ts: new Date().toISOString() };
+
+function row(parent, k, v, cls) {
+  const d = document.createElement('div'); d.className = 'kv';
+  const kk = document.createElement('span'); kk.className = 'k'; kk.textContent = k;
+  const vv = document.createElement('span'); vv.className = 'v' + (cls ? ' ' + cls : ''); vv.textContent = v;
+  d.appendChild(kk); d.appendChild(vv); parent.appendChild(d);
+}
+function clear(el) { el.innerHTML = ''; }
+function refreshDump() { $('dump').textContent = JSON.stringify(results, null, 2); }
+
+// ---------- 环境 ----------
+(function env() {
+  const b = $('envBody'), r = results.env = {};
+  const secure = window.isSecureContext;
+  r.isSecureContext = secure;
+  r.protocol = location.protocol;
+  r.host = location.host;
+  const hasGUM = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  r.hasGetUserMedia = hasGUM;
+  r.hasImageCapture = typeof window.ImageCapture !== 'undefined';
+  r.userAgent = navigator.userAgent;
+  r.platform = navigator.platform || '(n/a)';
+  r.maxTouchPoints = navigator.maxTouchPoints || 0;
+  r.hardwareConcurrency = navigator.hardwareConcurrency || null;
+  r.deviceMemory = navigator.deviceMemory || null;
+  const dm = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+  r.pwaStandalone = !!dm || navigator.standalone === true;
+  r.screen = { w: screen.width, h: screen.height, dpr: window.devicePixelRatio };
+
+  row(b, 'Secure Context', secure ? '是' : '否（相机不可用）', secure ? 'ok' : 'no');
+  row(b, 'protocol', location.protocol, secure ? 'ok' : 'no');
+  row(b, 'getUserMedia', hasGUM ? '可用' : '缺失', hasGUM ? 'ok' : 'no');
+  row(b, 'ImageCapture API', r.hasImageCapture ? '存在' : '不存在', r.hasImageCapture ? 'ok' : 'warn');
+  row(b, 'PWA standalone', r.pwaStandalone ? '是' : '否');
+  row(b, '屏幕', `${screen.width}×${screen.height} @${window.devicePixelRatio}x`);
+  row(b, 'CPU 线程', String(r.hardwareConcurrency || '未暴露'));
+  row(b, 'deviceMemory', String(r.deviceMemory || '未暴露'));
+
+  const banner = $('secureBanner');
+  if (!secure) {
+    banner.className = 'banner bad';
+    banner.textContent = '⚠ 当前不是安全上下文，摄像头 API 不可用。这就是报告缺口 1：户外手机走局域网 http:// 时相机功能整个不存在，必须先把取景页部署到 HTTPS。此页其余测试仍可部分进行。';
+  } else {
+    banner.className = 'banner good';
+    banner.textContent = '✓ 安全上下文正常，可以测试摄像头。';
+  }
+  refreshDump();
+})();
+
+let stream = null, track = null, imageCapture = null;
+
+async function start(facing) {
+  stopCam();
+  const camBody = $('camBody'); clear(camBody);
+  const r = results.camera = { requested: facing };
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: facing }, width: { ideal: 4096 }, height: { ideal: 2160 } },
+      audio: false,
+    });
+    track = stream.getVideoTracks()[0];
+    const v = $('video'); v.hidden = false; v.srcObject = stream; await v.play().catch(() => {});
+    const s = track.getSettings ? track.getSettings() : {};
+    r.settings = s;
+    r.trackLabel = track.label || '(无标签)';
+    row(camBody, '实时轨道', `${s.width || '?'}×${s.height || '?'} @${Math.round(s.frameRate || 0)}fps`, 'ok');
+    row(camBody, 'facingMode', String(s.facingMode || '未知'));
+    row(camBody, '轨道标签', track.label || '(空)');
+    row(camBody, 'deviceId', s.deviceId ? s.deviceId.slice(0, 12) + '…' : '(空)');
+
+    // 能力
+    const capBody = $('capBody'); clear(capBody);
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    r.capabilities = caps;
+    const zoom = caps.zoom ? `${caps.zoom.min}–${caps.zoom.max} (step ${caps.zoom.step})` : '不支持';
+    row(capBody, 'zoom 变焦', zoom, caps.zoom ? 'ok' : 'warn');
+    row(capBody, 'torch 手电筒', caps.torch ? '支持' : '不支持', caps.torch ? 'ok' : 'warn');
+    row(capBody, 'focusMode 对焦', caps.focusMode ? caps.focusMode.join('/') : '不可控', caps.focusMode ? 'ok' : 'warn');
+    row(capBody, 'exposureMode 曝光', caps.exposureMode ? caps.exposureMode.join('/') : '不可控', caps.exposureMode ? 'ok' : 'warn');
+    row(capBody, 'whiteBalanceMode', caps.whiteBalanceMode ? caps.whiteBalanceMode.join('/') : '不可控', caps.whiteBalanceMode ? 'ok' : 'warn');
+    if (caps.width && caps.height) row(capBody, '轨道最大分辨率', `${caps.width.max}×${caps.height.max}`);
+
+    // ImageCapture
+    if (typeof window.ImageCapture !== 'undefined') {
+      try {
+        imageCapture = new ImageCapture(track);
+        const photoCaps = await imageCapture.getPhotoCapabilities().catch(() => null);
+        if (photoCaps) {
+          r.photoCapabilities = {
+            imageWidth: photoCaps.imageWidth, imageHeight: photoCaps.imageHeight,
+          };
+          if (photoCaps.imageWidth) row(capBody, 'takePhoto 可达', `${photoCaps.imageWidth.max}×${photoCaps.imageHeight.max}`, 'ok');
+        }
+      } catch (e) { r.imageCaptureError = String(e); }
+    }
+
+    $('btnStop').disabled = false;
+    $('btnPhoto').disabled = !imageCapture;
+    $('btnGrab').disabled = !imageCapture;
+    $('btnVideoFrame').disabled = false;
+    await listDevices();
+
+    // 自动跑完三级拍照测试——避免"忘了按按钮"导致数据不全。
+    // 等 ~800ms 让自动曝光/对焦稳定后再拍。
+    const shot = $('shotBody'); clear(shot);
+    row(shot, '自动测试', '摄像头稳定中，即将拍照…', 'warn');
+    await new Promise((res) => setTimeout(res, 800));
+    clear(shot);
+    if (imageCapture) { await testTakePhoto(); await testGrabFrame(); }
+    testVideoFrame();
+  } catch (e) {
+    r.error = { name: e.name, message: e.message };
+    row(camBody, '启动失败', `${e.name}: ${e.message}`, 'no');
+  }
+  refreshDump();
+}
+
+function stopCam() {
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  stream = null; track = null; imageCapture = null;
+  $('video').hidden = true;
+  $('btnStop').disabled = true;
+  $('btnPhoto').disabled = true; $('btnGrab').disabled = true; $('btnVideoFrame').disabled = true;
+}
+
+async function testTakePhoto() {
+  const b = $('shotBody'); clear(b); const r = results.takePhoto = {};
+  try {
+    const t0 = performance.now();
+    // Safari 的 takePhoto 偶尔永不 resolve；6 秒超时兜底，避免卡住后续测试
+    const blob = await Promise.race([
+      imageCapture.takePhoto(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('takePhoto 6 秒超时（Safari 已知问题）')), 6000)),
+    ]);
+    const bmp = await createImageBitmap(blob);
+    r.ok = true; r.width = bmp.width; r.height = bmp.height; r.bytes = blob.size; r.ms = Math.round(performance.now() - t0);
+    r.megapixels = +(bmp.width * bmp.height / 1e6).toFixed(1);
+    row(b, 'takePhoto 分辨率', `${bmp.width}×${bmp.height}（${r.megapixels}MP）`, 'ok');
+    row(b, '文件大小', `${(blob.size / 1024).toFixed(0)} KB · ${r.ms}ms`);
+    bmp.close();
+  } catch (e) { r.ok = false; r.error = String(e); row(b, 'takePhoto 失败', String(e), 'no'); }
+  refreshDump();
+}
+
+async function testGrabFrame() {
+  const b = $('shotBody'); const r = results.grabFrame = {};
+  try {
+    const bmp = await imageCapture.grabFrame();
+    r.ok = true; r.width = bmp.width; r.height = bmp.height;
+    row(b, 'grabFrame 分辨率', `${bmp.width}×${bmp.height}`, 'ok');
+    bmp.close();
+  } catch (e) { r.ok = false; r.error = String(e); row(b, 'grabFrame 失败', String(e), 'no'); }
+  refreshDump();
+}
+
+function testVideoFrame() {
+  const b = $('shotBody'); const r = results.videoFrame = {};
+  const v = $('video'), c = $('canvas');
+  c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext('2d').drawImage(v, 0, 0);
+  r.width = v.videoWidth; r.height = v.videoHeight;
+  row(b, '视频帧抓取', `${v.videoWidth}×${v.videoHeight}（B 级实际输出）`, v.videoWidth ? 'ok' : 'no');
+  refreshDump();
+}
+
+async function listDevices() {
+  const b = $('devBody'); clear(b); const r = results.devices = [];
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const cams = devs.filter((d) => d.kind === 'videoinput');
+    row(b, '摄像头数量', String(cams.length), cams.length ? 'ok' : 'warn');
+    cams.forEach((d, i) => { r.push({ label: d.label, deviceId: d.deviceId.slice(0, 10) }); row(b, `镜头 ${i + 1}`, d.label || '(无标签，未授权？)'); });
+  } catch (e) { row(b, '枚举失败', String(e), 'no'); }
+  refreshDump();
+}
+
+async function testOrientation() {
+  const b = $('orientBody'); clear(b); const r = results.orientation = {};
+  try {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      const perm = await DeviceOrientationEvent.requestPermission();
+      r.permission = perm;
+      row(b, '权限（iOS 式）', perm, perm === 'granted' ? 'ok' : 'no');
+      if (perm !== 'granted') { refreshDump(); return; }
+    } else {
+      r.permission = 'no-prompt-needed';
+      row(b, '权限', '无需显式授权（安卓式）', 'ok');
+    }
+    let got = false;
+    const h = (e) => {
+      if (got) return; got = true;
+      r.sample = { alpha: e.alpha, beta: e.beta, gamma: e.gamma, absolute: e.absolute };
+      row(b, 'alpha/beta/gamma', `${(e.alpha||0).toFixed(0)} / ${(e.beta||0).toFixed(0)} / ${(e.gamma||0).toFixed(0)}`, 'ok');
+      window.removeEventListener('deviceorientation', h);
+      refreshDump();
+    };
+    window.addEventListener('deviceorientation', h);
+    setTimeout(() => { if (!got) { row(b, '读数', '5 秒内无数据', 'warn'); } }, 5000);
+  } catch (e) { r.error = String(e); row(b, '失败', String(e), 'no'); }
+  refreshDump();
+}
+
+// 系统相机
+$('btnSysCam').addEventListener('click', () => $('fileCap').click());
+$('fileCap').addEventListener('change', async (e) => {
+  const b = $('sysBody'); clear(b); const r = results.systemCamera = {};
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  r.type = f.type; r.bytes = f.size; r.name = f.name;
+  try {
+    const bmp = await createImageBitmap(f);
+    r.width = bmp.width; r.height = bmp.height; r.megapixels = +(bmp.width * bmp.height / 1e6).toFixed(1);
+    row(b, '系统相机照片', `${bmp.width}×${bmp.height}（${r.megapixels}MP）`, 'ok');
+    row(b, '格式 / 大小', `${f.type || '?'} · ${(f.size / 1048576).toFixed(1)} MB`);
+    bmp.close();
+  } catch (err) {
+    r.decodeError = String(err);
+    row(b, '解码失败（可能 HEIC）', `${f.type || '?'} · ${(f.size/1048576).toFixed(1)}MB · ${err}`, 'warn');
+  }
+  refreshDump();
+});
+
+$('btnStart').addEventListener('click', () => start('environment'));
+$('btnStartFront').addEventListener('click', () => start('user'));
+$('btnStop').addEventListener('click', stopCam);
+$('btnPhoto').addEventListener('click', testTakePhoto);
+$('btnGrab').addEventListener('click', testGrabFrame);
+$('btnVideoFrame').addEventListener('click', testVideoFrame);
+$('btnOrient').addEventListener('click', testOrientation);
+
+$('btnCopy').addEventListener('click', async () => {
+  const text = JSON.stringify(results, null, 2);
+  try { await navigator.clipboard.writeText(text); $('btnCopy').textContent = '已复制 ✓'; setTimeout(() => $('btnCopy').textContent = '复制全部结果', 1500); }
+  catch { $('dump').textContent = text; $('btnCopy').textContent = '手动选中下方文本复制'; }
+});
+if (navigator.share) {
+  $('btnShare').hidden = false;
+  $('btnShare').addEventListener('click', () => navigator.share({ title: '相机探针结果', text: JSON.stringify(results) }).catch(() => {}));
+}
+
+document.addEventListener('visibilitychange', () => { if (document.hidden) stopCam(); });
+</script>
+</body>
+</html>
