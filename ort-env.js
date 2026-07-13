@@ -23,8 +23,58 @@ async function loadOrt() {
   return ortPromise;
 }
 
-// 带进度的下载，返回 ArrayBuffer
+// 分块模型清单：GitHub Pages 不解析 Git LFS，而本机代理又拦 >约 40MB 的推送，
+// 故两个 83MB 的 ISNet 拆成 30MB 分块入库（models/xxx.onnx.part00..02），
+// 浏览器按序取回再拼成完整 ArrayBuffer。值 = 分块数。
+const CHUNKED_MODELS = {
+  'isnet-anime-fp16.onnx': 3,
+  'isnet-anime-512-fp16.onnx': 3,
+};
+
+// 带进度的单文件下载，返回 { chunks:Uint8Array[], received }
+async function fetchStream(url, baseReceived, grandTotal, onProgress) {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error('模型下载失败 ' + resp.status);
+  if (!resp.body) { const b = new Uint8Array(await resp.arrayBuffer()); onProgress && onProgress(baseReceived + b.length, grandTotal); return { chunks: [b], received: b.length }; }
+  const reader = resp.body.getReader();
+  const chunks = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    onProgress && onProgress(baseReceived + received, grandTotal);
+  }
+  return { chunks, received };
+}
+
+// 带进度的下载，返回 ArrayBuffer。分块模型自动按 .partNN 取回并拼接。
 async function fetchWithProgress(url, onProgress) {
+  const base = url.split('?')[0];
+  const name = base.slice(base.lastIndexOf('/') + 1);
+  const parts = CHUNKED_MODELS[name];
+
+  if (parts) {
+    // 分块：先各自 HEAD 拿总大小做进度分母（失败则用估算），再顺序流式取回拼接
+    const urls = Array.from({ length: parts }, (_, i) => `${base}.part${String(i).padStart(2, '0')}`);
+    let grandTotal = 0;
+    await Promise.all(urls.map(async (u) => {
+      try { const h = await fetch(u, { method: 'HEAD' }); grandTotal += +h.headers.get('content-length') || 0; } catch { /* 忽略 */ }
+    }));
+    if (!grandTotal) grandTotal = parts * 30 * 1024 * 1024; // 估算兜底
+    const all = [];
+    let received = 0;
+    for (const u of urls) {
+      const r = await fetchStream(u, received, grandTotal, onProgress);
+      all.push(...r.chunks); received += r.received;
+    }
+    const buf = new Uint8Array(received);
+    let pos = 0;
+    for (const c of all) { buf.set(c, pos); pos += c.length; }
+    return buf.buffer;
+  }
+
   const resp = await fetch(url);
   if (!resp.ok) throw new Error('模型下载失败 ' + resp.status);
   const total = +resp.headers.get('content-length') || 0;
