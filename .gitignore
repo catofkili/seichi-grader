@@ -16,3 +16,7 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# ISNet 完整模型改为分块分发（>代理传输上限），完整文件仅本地保留
+models/isnet-anime-fp16.onnx
+models/isnet-anime-512-fp16.onnx
