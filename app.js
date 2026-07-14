@@ -36,6 +36,30 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 const setStatus = (t) => { $('status').textContent = t; };
+const recentErrors = [];
+function rememberError(where, error) {
+  recentErrors.push({ at: new Date().toISOString(), where, name: error?.name || 'Error', message: String(error?.message || error) });
+  if (recentErrors.length > 12) recentErrors.shift();
+}
+window.addEventListener('error', (event) => rememberError('window.error', event.error || event.message));
+window.addEventListener('unhandledrejection', (event) => rememberError('unhandledrejection', event.reason));
+
+// 轻量工作流：不阻塞操作，只告诉第一次来的用户当前下一步是什么。
+function updateWorkflow() {
+  const steps = [...$('workflowSteps').querySelectorAll('li')];
+  const complete = {
+    anime: !!state.anime,
+    photo: !!state.photo,
+    grade: !!state.gradedData,
+    compose: !!state.cutout,
+  };
+  let current = !complete.anime ? 'anime' : !complete.photo ? 'photo' : !complete.grade ? 'grade' : 'compose';
+  for (const item of steps) {
+    const key = item.dataset.step;
+    item.classList.toggle('done', !!complete[key]);
+    item.classList.toggle('current', key === current && !complete[key]);
+  }
+}
 
 // 把 File 读成按 MAX_DIM 缩放后的 ImageData
 function fileToImageData(file) {
@@ -64,6 +88,51 @@ function fileToImageData(file) {
 
 function isHeicFile(file) {
   return /\.(heic|heif)$/i.test(file.name || '') || /image\/(heic|heif)/i.test(file.type || '');
+}
+
+// 只读取 JPEG EXIF 的 GPS；没有坐标或解析失败不会影响上传与调色。
+async function readExifGPS(file) {
+  if (!/image\/jpe?g/i.test(file.type || '') && !/\.jpe?g$/i.test(file.name || '')) return null;
+  try {
+    const view = new DataView(await file.arrayBuffer());
+    if (view.getUint16(0) !== 0xffd8) return null;
+    let pos = 2;
+    while (pos + 4 < view.byteLength) {
+      if (view.getUint8(pos) !== 0xff) break;
+      const marker = view.getUint8(pos + 1), len = view.getUint16(pos + 2);
+      if (marker === 0xe1 && len >= 10 && view.getUint32(pos + 4) === 0x45786966) {
+        const base = pos + 10, little = view.getUint16(base) === 0x4949;
+        const u16 = (at) => view.getUint16(at, little), u32 = (at) => view.getUint32(at, little);
+        const ifd = base + u32(base + 4), count = u16(ifd);
+        let gpsOffset = 0;
+        for (let i = 0; i < count; i++) {
+          const at = ifd + 2 + i * 12;
+          if (u16(at) === 0x8825) { gpsOffset = u32(at + 8); break; }
+        }
+        if (!gpsOffset) return null;
+        const gps = base + gpsOffset, gpsCount = u16(gps), values = new Map();
+        for (let i = 0; i < gpsCount; i++) {
+          const at = gps + 2 + i * 12, tag = u16(at);
+          values.set(tag, { type: u16(at + 2), n: u32(at + 4), value: u32(at + 8), at });
+        }
+        const ascii = (entry) => entry ? String.fromCharCode(view.getUint8(entry.at + 8)) : '';
+        const rational3 = (entry) => {
+          if (!entry || entry.type !== 5 || entry.n < 3) return null;
+          const at = base + entry.value;
+          const r = (i) => { const d = u32(at + i * 8 + 4); return d ? u32(at + i * 8) / d : 0; };
+          return r(0) + r(1) / 60 + r(2) / 3600;
+        };
+        let lat = rational3(values.get(2)), lon = rational3(values.get(4));
+        if (lat == null || lon == null) return null;
+        if (ascii(values.get(1)) === 'S') lat = -lat;
+        if (ascii(values.get(3)) === 'W') lon = -lon;
+        return { lat, lon };
+      }
+      if (len < 2) break;
+      pos += len + 2;
+    }
+  } catch { /* 无 EXIF、损坏文件或浏览器拒绝读取时忽略 */ }
+  return null;
 }
 
 // 开发验收/演示素材走同一条读取路径，避免另写一套“看起来能跑”的测试逻辑。
@@ -192,7 +261,8 @@ function recompute() {
   $('emptyHint').hidden = true;
   redrawComposite();          // 画 gradedData + 角色
   syncCanvasSize();
-  ['btnExportImg', 'btnExportCompare', 'btnExportLut'].forEach(id => $(id).disabled = false);
+  ['btnExportImg', 'btnExportCompare', 'btnExportWipe', 'btnExportLut', 'btnBatchExport'].forEach(id => $(id).disabled = false);
+  updateWorkflow();
   const modeText = mode === 'tone' ? '影调+色彩' : mode === 'full' ? '完整' : '仅色彩';
   setStatus(`已调色 · ${modeText} · 强度 ${$('strength').value}% · 天空分区：${useRegion ? '已启用' : `未启用（${skyReason}）`}`);
 }
@@ -334,8 +404,11 @@ function applyRefine(resetPos) {
     ctx.putImageData(cimg, 0, 0);
   }
   invalidateHarmonize();
+  $('btnExportCharacter').disabled = !state.cutout;
+  $('btnEraseMask').disabled = !state.cutout;
   if (resetPos) state.charPos = { cx: 0.5, cy: 0.62 };
   redrawComposite();
+  updateWorkflow();
   return coverage;
 }
 
@@ -348,7 +421,8 @@ function bindDrop(dropId, inputId, thumbId, onLoad) {
     if (!file.type.startsWith('image/') && !imageExt) { setStatus('请选择 JPEG、PNG、WebP 或 HEIC 图片'); return; }
     try {
       setStatus(isHeicFile(file) ? '使用系统解码 HEIC 并校正方向…' : '读取图片并校正 EXIF 方向…');
-      const data = await fileToImageData(file);
+      const [data, gps] = await Promise.all([fileToImageData(file), readExifGPS(file)]);
+      data.gps = gps;
       thumb.src = data.url; thumb.hidden = false;
       await onLoad(data);
     } catch (e) { setStatus('读取失败：' + (e.message || e)); }
@@ -374,8 +448,11 @@ async function handleAnimeData(data) {
   $('btnExtract').disabled = false;
   $('btnExtractAI').disabled = false;
   $('btnLasso').disabled = false;
+  $('btnEraseMask').disabled = true;
+  $('btnExportCharacter').disabled = true;
   $('extractStatus').textContent = '点击「扒取人物」试试';
   $('btnAlign').disabled = !state.photo;
+  updateWorkflow();
   recompute();
 }
 
@@ -384,11 +461,12 @@ async function handlePhotoData(data) {
   state.photo = {
     imgData: data.imgData, width: data.width, height: data.height, srcUrl: data.url, align: null,
     originalWidth: data.originalWidth || data.width, originalHeight: data.originalHeight || data.height,
-    fileName: data.fileName || '',
+    fileName: data.fileName || '', gps: data.gps || null,
   };
   state.gradeCache = null;
   exitAlignMode(false);
   $('btnAlign').disabled = !state.anime;
+  updateWorkflow();
   setStatus(`照片已读取 · 原图 ${state.photo.originalWidth}×${state.photo.originalHeight} · 预览 ${data.width}×${data.height}`);
   recompute();
 }
@@ -1011,7 +1089,32 @@ $('btnExportCompare').addEventListener('click', () => {
   if (layout === 'triple') panels = [fit(tmpAnime), fit(tmpOrig), fit(tmpGraded)];
   else panels = [fit(tmpAnime), fit(tmpGraded)];
 
-  if (layout === 'leftright') {
+  if (layout === 'postcard') {
+    const title = $('compareTitle').value.trim() || '聖地巡礼 · 此处与彼处';
+    const manualPlace = $('comparePlace').value.trim();
+    const gps = state.photo.gps;
+    const gpsText = gps ? `${gps.lat.toFixed(5)}, ${gps.lon.toFixed(5)}` : '';
+    const place = [manualPlace, gpsText].filter(Boolean).join(' · ');
+    const header = Math.round(W * .20), footer = place ? Math.round(W * .10) : Math.round(W * .045);
+    out.width = W;
+    out.height = header + panels.reduce((s, p) => s + p.h, 0) + gap + footer;
+    ctx.fillStyle = '#0e1014'; ctx.fillRect(0, 0, out.width, out.height);
+    ctx.fillStyle = '#ff5e8a'; ctx.fillRect(0, 0, W, Math.max(4, Math.round(W / 100)));
+    ctx.fillStyle = '#f2f4f8'; ctx.font = `600 ${Math.round(W / 19)}px sans-serif`; ctx.textBaseline = 'top';
+    ctx.fillText(title, Math.round(W * .06), Math.round(W * .055), Math.round(W * .88));
+    let y = header;
+    panels.forEach((p, i) => {
+      ctx.drawImage(p.cv, 0, y, W, p.h);
+      ctx.fillStyle = 'rgba(0,0,0,.58)'; ctx.fillRect(12, y + 12, Math.round(W * .19), Math.round(W * .07));
+      ctx.fillStyle = '#fff'; ctx.font = `600 ${Math.round(W / 28)}px sans-serif`;
+      ctx.fillText(i ? '此处 · 调色后' : '彼处 · 动画', 20, y + 20);
+      y += p.h + gap;
+    });
+    if (place) {
+      ctx.fillStyle = '#aeb7c8'; ctx.font = `${Math.round(W / 34)}px sans-serif`;
+      ctx.fillText(place, Math.round(W * .06), y + Math.round(W * .025), Math.round(W * .88));
+    }
+  } else if (layout === 'leftright') {
     const H = Math.max(...panels.map(p => p.h));
     out.width = W * panels.length + gap * (panels.length - 1);
     out.height = H;
@@ -1027,13 +1130,155 @@ $('btnExportCompare').addEventListener('click', () => {
   download(out.toDataURL('image/png'), 'seichi-compare.png');
 });
 
+$('btnExportCharacter').addEventListener('click', async () => {
+  if (!state.cutout) { setStatus('请先抠出角色'); return; }
+  const btn = $('btnExportCharacter'); btn.disabled = true;
+  try {
+    const blob = await new Promise((resolve) => state.cutout.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('浏览器无法编码透明 PNG');
+    const url = URL.createObjectURL(blob);
+    download(url, 'seichi-character.png');
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    setStatus(`已导出角色透明 PNG · ${state.cutout.width}×${state.cutout.height}`);
+  } catch (e) { setStatus('角色 PNG 导出失败：' + (e.message || e)); }
+  finally { btn.disabled = false; }
+});
+
+// 滑动对比动图使用当前预览分辨率（最长边最多 1080px），避免为了 4 秒视频再次
+// 跑一遍全分辨率调色并在手机上占用过多内存。导出内容与页面中央滑杆完全一致。
+function makeWipeFrameCanvas(maxSide = 1080) {
+  const src = $('canvasGraded');
+  const scale = Math.min(1, maxSide / Math.max(src.width, src.height));
+  const w = Math.max(2, Math.round(src.width * scale)), h = Math.max(2, Math.round(src.height * scale));
+  const original = document.createElement('canvas'); original.width = w; original.height = h;
+  original.getContext('2d').drawImage($('canvasOrig'), 0, 0, w, h);
+  const graded = document.createElement('canvas'); graded.width = w; graded.height = h;
+  graded.getContext('2d').drawImage(src, 0, 0, w, h);
+  const frame = document.createElement('canvas'); frame.width = w; frame.height = h;
+  return { frame, original, graded, w, h };
+}
+
+function drawWipeFrame(ctx, original, graded, w, h, progress) {
+  const split = Math.round(w * progress);
+  ctx.drawImage(graded, 0, 0);
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 0, split, h); ctx.clip();
+  ctx.drawImage(original, 0, 0); ctx.restore();
+  ctx.fillStyle = 'rgba(255,255,255,.96)'; ctx.fillRect(Math.max(0, split - 1), 0, 2, h);
+  ctx.font = `600 ${Math.max(14, Math.round(w / 48))}px sans-serif`;
+  ctx.textBaseline = 'top';
+  const label = (text, x) => {
+    const pad = Math.max(7, Math.round(w / 150)), y = pad;
+    const tw = ctx.measureText(text).width;
+    ctx.fillStyle = 'rgba(0,0,0,.58)'; ctx.fillRect(x, y, tw + pad * 2, Math.max(26, Math.round(w / 34)));
+    ctx.fillStyle = '#fff'; ctx.fillText(text, x + pad, y + pad * .7);
+  };
+  label('原图', Math.max(8, Math.min(split - 70, w - 80)));
+  label('调色后', Math.min(w - 92, Math.max(split + 10, 8)));
+}
+
+function supportedVideoType() {
+  if (!('MediaRecorder' in window) || !HTMLCanvasElement.prototype.captureStream) return '';
+  const options = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
+  return options.find((type) => MediaRecorder.isTypeSupported(type)) || '';
+}
+
+async function recordWipeVideo() {
+  const mimeType = supportedVideoType();
+  if (!mimeType) throw new Error('此浏览器不支持动图视频编码；请用最新版 Chrome、Edge 或 Safari 重试');
+  const { frame, original, graded, w, h } = makeWipeFrameCanvas();
+  const ctx = frame.getContext('2d'), stream = frame.captureStream(24), chunks = [];
+  const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 5_000_000 });
+  const duration = 3600;
+  const blob = await new Promise((resolve, reject) => {
+    recorder.addEventListener('dataavailable', (e) => { if (e.data.size) chunks.push(e.data); });
+    recorder.addEventListener('error', () => reject(new Error('浏览器编码动图失败')));
+    recorder.addEventListener('stop', () => resolve(new Blob(chunks, { type: mimeType })));
+    const started = performance.now();
+    const render = (now) => {
+      const t = Math.min(1, (now - started) / duration);
+      // 从左到右、再回到左侧，形成可循环播放的擦除效果。
+      const progress = .06 + .88 * (0.5 - 0.5 * Math.cos(Math.PI * 2 * t));
+      drawWipeFrame(ctx, original, graded, w, h, progress);
+      if (t < 1) requestAnimationFrame(render); else recorder.stop();
+    };
+    recorder.start(250);
+    requestAnimationFrame(render);
+  });
+  stream.getTracks().forEach((track) => track.stop());
+  if (!blob.size) throw new Error('浏览器没有生成动图数据');
+  return { blob, mimeType, width: w, height: h };
+}
+
+$('btnExportWipe').addEventListener('click', async () => {
+  const btn = $('btnExportWipe'); btn.disabled = true;
+  try {
+    setStatus('正在录制 4 秒滑动对比动图…请保持页面在前台');
+    const video = await recordWipeVideo();
+    const ext = video.mimeType.includes('mp4') ? 'mp4' : 'webm';
+    const url = URL.createObjectURL(video.blob);
+    download(url, `seichi-wipe-compare.${ext}`);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    setStatus(`已导出 ${ext.toUpperCase()} 动图 · ${video.width}×${video.height} · 4 秒循环`);
+  } catch (e) {
+    console.error(e);
+    setStatus('动图导出失败：' + (e.message || e));
+  } finally { btn.disabled = false; }
+});
+
+// 批量导出复用当前动画截图、滑杆和预设；逐张渲染/释放，避免同时把多张原图塞进内存。
+$('btnBatchExport').addEventListener('click', () => {
+  if (!state.anime) { setStatus('请先上传动画截图'); return; }
+  $('batchFiles').value = '';
+  $('batchFiles').click();
+});
+
+$('batchFiles').addEventListener('change', async (event) => {
+  const files = [...event.target.files].slice(0, 20);
+  if (!files.length) return;
+  const saved = { photo: state.photo, gradedData: state.gradedData, transform: state.transform, gradeCache: state.gradeCache, cutout: state.cutout };
+  const btn = $('btnBatchExport'); btn.disabled = true;
+  let completed = 0, failed = 0;
+  try {
+    state.cutout = null; // 批量套色不意外带入当前手工摆放的角色。
+    for (let i = 0; i < files.length; i++) {
+      try {
+        setStatus(`批量读取 ${i + 1}/${files.length}…`);
+        const [data, gps] = await Promise.all([fileToImageData(files[i]), readExifGPS(files[i])]);
+        state.photo = {
+          imgData: data.imgData, width: data.width, height: data.height, srcUrl: data.url, align: null,
+          originalWidth: data.originalWidth || data.width, originalHeight: data.originalHeight || data.height,
+          fileName: data.fileName || files[i].name, gps,
+        };
+        state.gradeCache = null;
+        const canvas = await renderFullRes((text) => setStatus(`批量 ${i + 1}/${files.length} · ${text}`));
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', .92));
+        if (!blob) throw new Error('JPEG 编码失败');
+        const base = (files[i].name || `photo-${i + 1}`).replace(/\.[^.]+$/, '');
+        const url = URL.createObjectURL(blob);
+        download(url, `${base}-seichi.jpg`);
+        setTimeout(() => URL.revokeObjectURL(url), 8000);
+        URL.revokeObjectURL(data.url);
+        completed++;
+      } catch (error) {
+        console.error(error); rememberError('batch-export', error); failed++;
+      }
+    }
+  } finally {
+    state.photo = saved.photo; state.gradedData = saved.gradedData; state.transform = saved.transform;
+    state.gradeCache = saved.gradeCache; state.cutout = saved.cutout;
+    if (state.photo) recompute();
+    btn.disabled = !state.anime;
+    setStatus(`批量导出完成：${completed} 张成功${failed ? `，${failed} 张失败` : ''}`);
+  }
+});
+
 // ---------- 参数自动恢复与风格预设 ----------
 const SETTINGS_KEY = 'seichi-current-settings-v1';
 const PRESETS_KEY = 'seichi-style-presets-v1';
 const SETTING_IDS = [
   'mode', 'skyRegion', 'ignoreSub', 'strength', 'satBoost', 'bloom', 'composite',
   'hiresDet', 'mobileSam', 'maskThr', 'maskErode', 'charScale', 'harmonize', 'shadow',
-  'shadowOffset', 'grain', 'layout',
+  'shadowOffset', 'grain', 'layout', 'compareTitle', 'comparePlace',
 ];
 
 function captureSettings() {
@@ -1130,51 +1375,112 @@ refreshPresetList();
 
 // ---------- 模型持久缓存状态 ----------
 const MODEL_CACHE = 'seichi-models-v2';
-const MODEL_URLS = [
-  './models/person-detect.onnx', DEVICE.isAppleMobile ? './models/isnet-anime-512-fp16.onnx' : './models/isnet-anime-fp16.onnx',
-  './models/sam-encoder.onnx', './models/sam-decoder.onnx',
-];
+// 运行时实际读取 ISNet 的三个分块（见 ort-env.js），不是同名的整文件。
+// 因此离线包也只缓存分块，避免把同一模型下载两遍。
+const ISNET_URL = DEVICE.isAppleMobile ? './models/isnet-anime-512-fp16.onnx' : './models/isnet-anime-fp16.onnx';
+const ISNET_PARTS = Array.from({ length: 3 }, (_, i) => `${ISNET_URL}.part${String(i).padStart(2, '0')}`);
+const AUTO_MODEL_URLS = ['./models/person-detect.onnx', ...ISNET_PARTS];
+const SAM_MODEL_URLS = ['./models/sam-encoder.onnx', './models/sam-decoder.onnx'];
 const ORT_BASE = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/';
 const RUNTIME_URLS = [
   'ort.webgpu.mjs', 'ort-wasm-simd-threaded.jsep.mjs', 'ort-wasm-simd-threaded.jsep.wasm',
   'ort-wasm-simd-threaded.mjs', 'ort-wasm-simd-threaded.wasm',
 ].map((name) => ORT_BASE + name);
-const AI_CACHE_URLS = [...MODEL_URLS, ...RUNTIME_URLS];
+const AUTO_CACHE_URLS = [...AUTO_MODEL_URLS, ...RUNTIME_URLS];
+
+const cacheKey = (url) => new URL(url, location.href).href;
+async function cacheHas(cache, url) {
+  return !!(await cache.match(cacheKey(url), { ignoreVary: true }));
+}
+async function countCached(cache, urls) {
+  return (await Promise.all(urls.map((url) => cacheHas(cache, url)))).filter(Boolean).length;
+}
 
 async function updateModelCacheStatus() {
   const label = $('modelCacheStatus');
   if (!('caches' in window) || !('serviceWorker' in navigator)) {
-    label.textContent = '此浏览器不支持模型持久缓存'; $('btnCacheModels').disabled = true; return;
+    label.textContent = '此浏览器不支持模型持久缓存';
+    ['btnCacheModels', 'btnCacheSam', 'btnClearModelCache'].forEach((id) => { $(id).disabled = true; });
+    return;
   }
   try {
     const cache = await caches.open(MODEL_CACHE);
-    let modelCount = 0, runtimeCount = 0;
-    for (const url of MODEL_URLS) if (await cache.match(new URL(url, location.href).href, { ignoreVary: true })) modelCount++;
-    for (const url of RUNTIME_URLS) if (await cache.match(url, { ignoreVary: true })) runtimeCount++;
-    const ready = modelCount === MODEL_URLS.length && runtimeCount === RUNTIME_URLS.length;
-    label.textContent = ready
-      ? 'AI 模型与运行时已缓存 ✓ · 系统清理后可重新下载'
-      : `模型 ${modelCount}/${MODEL_URLS.length} · 运行时 ${runtimeCount}/${RUNTIME_URLS.length}`;
-    $('btnCacheModels').textContent = ready ? '重新校验离线缓存' : '缓存全部 AI 模型（约 180MB）';
+    const autoCount = await countCached(cache, AUTO_CACHE_URLS);
+    const samCount = await countCached(cache, SAM_MODEL_URLS);
+    const autoReady = autoCount === AUTO_CACHE_URLS.length;
+    const samReady = samCount === SAM_MODEL_URLS.length;
+    label.textContent = `自动抠图：${autoReady ? '已可离线使用 ✓' : `${autoCount}/${AUTO_CACHE_URLS.length} 个文件`}`
+      + ` · SAM 兜底：${samReady ? '已可离线使用 ✓' : `${samCount}/${SAM_MODEL_URLS.length} 个文件`}`;
+    $('btnCacheModels').textContent = autoReady
+      ? '自动抠图离线包已就绪 ✓'
+      : autoCount ? `继续下载自动抠图离线包（已完成 ${autoCount}/${AUTO_CACHE_URLS.length}）` : '下载自动抠图离线包（约 127MB）';
+    $('btnCacheSam').textContent = samReady
+      ? 'SAM 高质量兜底包已就绪 ✓'
+      : samCount ? `继续下载 SAM 兜底包（已完成 ${samCount}/${SAM_MODEL_URLS.length}）` : '下载 SAM 高质量兜底包（约 38MB）';
   } catch (e) { label.textContent = '无法读取模型缓存：' + (e.message || e); }
 }
 
-$('btnCacheModels').addEventListener('click', async () => {
-  const btn = $('btnCacheModels'), label = $('modelCacheStatus'); btn.disabled = true;
+async function downloadOfflinePackage(kind, urls, button) {
+  const label = $('modelCacheStatus'); button.disabled = true;
   try {
     await navigator.serviceWorker.ready;
     if (navigator.storage?.persist) await navigator.storage.persist().catch(() => false);
-    for (let i = 0; i < AI_CACHE_URLS.length; i++) {
-      label.textContent = i < MODEL_URLS.length
-        ? `正在缓存 AI 模型 ${i + 1}/${MODEL_URLS.length}…`
-        : `正在缓存推理运行时 ${i - MODEL_URLS.length + 1}/${RUNTIME_URLS.length}…`;
-      const response = await fetch(AI_CACHE_URLS[i]);
-      if (!response.ok) throw new Error(`${AI_CACHE_URLS[i]} 下载失败（${response.status}）`);
-      await response.arrayBuffer(); // 等响应完整落入 Service Worker Cache 后再取下一个
+    const cache = await caches.open(MODEL_CACHE);
+    let done = await countCached(cache, urls);
+    for (const url of urls) {
+      if (await cacheHas(cache, url)) continue;
+      label.textContent = `正在下载${kind} ${done + 1}/${urls.length}…请保持此页面打开`;
+      // cache.add 会等待完整响应写入 Cache Storage。网络中断后，已完成的文件保留；
+      // 再点一次按钮只补未完成的文件，而不是从头下载整个模型。
+      await cache.add(cacheKey(url));
+      done++;
     }
     await updateModelCacheStatus();
-  } catch (e) { label.textContent = '模型缓存失败：' + (e.message || e); }
-  finally { btn.disabled = false; }
+  } catch (e) {
+    try {
+      const cache = await caches.open(MODEL_CACHE);
+      const done = await countCached(cache, urls);
+      label.textContent = `${kind}下载暂停（已完成 ${done}/${urls.length}）· 网络恢复后点“继续下载”即可`;
+    } catch { label.textContent = `${kind}下载失败：${e.message || e}`; }
+  } finally { button.disabled = false; }
+}
+
+$('btnCacheModels').addEventListener('click', () => downloadOfflinePackage('自动抠图离线包', AUTO_CACHE_URLS, $('btnCacheModels')));
+$('btnCacheSam').addEventListener('click', () => downloadOfflinePackage('SAM 高质量兜底包', SAM_MODEL_URLS, $('btnCacheSam')));
+$('btnClearModelCache').addEventListener('click', async () => {
+  const label = $('modelCacheStatus');
+  $('btnClearModelCache').disabled = true;
+  try {
+    await releaseAllSessions();
+    await caches.delete(MODEL_CACHE);
+    label.textContent = 'AI 离线包已删除；基础调色仍可离线使用';
+    await updateModelCacheStatus();
+  } catch (e) { label.textContent = '删除离线包失败：' + (e.message || e); }
+  finally { $('btnClearModelCache').disabled = false; }
+});
+
+$('btnExportDiagnostics').addEventListener('click', async () => {
+  const info = {
+    generatedAt: new Date().toISOString(),
+    userAgent: navigator.userAgent,
+    online: navigator.onLine,
+    crossOriginIsolated: self.crossOriginIsolated,
+    device: DEVICE,
+    image: {
+      anime: state.anime ? `${state.anime.width}×${state.anime.height}` : null,
+      photo: state.photo ? `${state.photo.originalWidth}×${state.photo.originalHeight}` : null,
+      preview: state.photo ? `${state.photo.width}×${state.photo.height}` : null,
+      hasCharacter: !!state.cutout,
+    },
+    storage: null,
+    recentErrors,
+  };
+  try { info.storage = await navigator.storage?.estimate?.() || null; } catch { /* 不支持时省略 */ }
+  const blob = new Blob([JSON.stringify(info, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  download(url, 'seichi-diagnostics.json');
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  setStatus('已导出诊断信息；将该 JSON 与问题截图一起发来即可');
 });
 
 $('deviceStatus').textContent = IS_MOBILE
@@ -1183,6 +1489,7 @@ $('deviceStatus').textContent = IS_MOBILE
 $('mobileSamRow').hidden = !DEVICE.isAppleMobile;
 
 setStatus('请上传动画截图与实景照片');
+updateWorkflow();
 
 // Service Worker：把 190MB 的 ONNX 模型钉进 Cache Storage，二次访问/离线可用。
 // file:// 或不支持时静默跳过，不影响功能。
@@ -1196,7 +1503,7 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 // ---------- 圈选抠图（LR 式手动指定范围）----------
 // 自动检测漏检/抠错/骑车构图无响应时，用户在截图上随手圈出角色，
 // 走与自动流水线相同的"框裁剪 → ISNet → SAM 兜底"，笔迹质心作为 SAM 提示点。
-const lassoState = { pts: [], drawing: false, busy: false };
+const lassoState = { pts: [], drawing: false, busy: false, mode: 'extract' };
 
 function lassoRedraw() {
   const c = $('lassoCanvas'), ctx = c.getContext('2d');
@@ -1226,11 +1533,16 @@ function lassoBBox() {
   return { x: Math.round(minX), y: Math.round(minY), w: Math.round(maxX - minX), h: Math.round(maxY - minY) };
 }
 
-function openLasso() {
+function openLasso(mode = 'extract') {
   if (!state.anime) return;
   const c = $('lassoCanvas');
   c.width = state.anime.width; c.height = state.anime.height;
   lassoState.pts = []; lassoState.drawing = false;
+  lassoState.mode = mode;
+  $('lassoTip').textContent = mode === 'erase'
+    ? '圈出要从当前抠图中擦掉的区域——可多次使用，不会重新下载模型'
+    : '在截图上圈出要抠的角色——随手画个圈就行，不必精确贴边';
+  $('btnLassoRun').textContent = mode === 'erase' ? '擦除圈选区域' : '抠取圈选区域';
   $('btnLassoRun').disabled = true;
   lassoRedraw();
   $('lassoModal').hidden = false;
@@ -1280,11 +1592,30 @@ async function runLassoBox(box, centroid) {
 }
 
 $('btnLasso').addEventListener('click', openLasso);
+$('btnEraseMask').addEventListener('click', () => openLasso('erase'));
 $('btnLassoClose').addEventListener('click', closeLasso);
 $('btnLassoClear').addEventListener('click', () => { lassoState.pts = []; $('btnLassoRun').disabled = true; lassoRedraw(); });
 $('btnLassoRun').addEventListener('click', async () => {
   const box = lassoBBox();
   if (box.w < 12 || box.h < 12) { $('extractStatus').textContent = '圈得太小了，重新圈一下'; return; }
+  if (lassoState.mode === 'erase') {
+    const pts = lassoState.pts;
+    const inside = (x, y) => {
+      let hit = false;
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const [xi, yi] = pts[i], [xj, yj] = pts[j];
+        if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) hit = !hit;
+      }
+      return hit;
+    };
+    for (let y = box.y; y < box.y + box.h; y++) for (let x = box.x; x < box.x + box.w; x++) {
+      if (inside(x + .5, y + .5)) state.rawAlpha[y * state.rawW + x] = 0;
+    }
+    closeLasso();
+    const coverage = applyRefine(false);
+    $('extractStatus').textContent = `已擦除圈选区域 · 当前角色占画面 ${(coverage * 100).toFixed(0)}%`;
+    return;
+  }
   let sx = 0, sy = 0;
   for (const [x, y] of lassoState.pts) { sx += x; sy += y; }
   const centroid = [sx / lassoState.pts.length, sy / lassoState.pts.length];

@@ -31,6 +31,16 @@
   </header>
 
   <div class="page">
+  <nav class="workflow" aria-label="使用流程">
+    <div class="workflow-title">第一次使用</div>
+    <ol id="workflowSteps">
+      <li data-step="anime" class="current"><span>1</span>上传动画截图</li>
+      <li data-step="photo"><span>2</span>拍摄或上传实景</li>
+      <li data-step="grade"><span>3</span>调色完成</li>
+      <li data-step="compose"><span>4</span>合成角色 <em>可选</em></li>
+      <li data-step="export"><span>5</span>导出分享</li>
+    </ol>
+  </nav>
   <main class="layout">
     <!-- 左：素材 -->
     <section class="panel inputs">
@@ -142,8 +152,10 @@
         <div class="d-body">
           <div class="extract-box">
             <button id="btnExtract" class="ghost" disabled>扒取人物（纯算法·秒开）</button>
-            <button id="btnExtractAI" class="ghost ai" disabled>AI 抠角色（检测＋抠图 · 首次下 ~127MB）</button>
+            <button id="btnExtractAI" class="ghost ai" disabled>AI 抠角色（首次下载约 127MB）</button>
             <button id="btnLasso" class="ghost" disabled>圈选抠角色（AI 找不到时手动圈）</button>
+            <button id="btnEraseMask" class="ghost" disabled>抠图橡皮擦（减选）</button>
+            <button id="btnExportCharacter" class="ghost" disabled>导出角色透明 PNG</button>
             <label class="check">
               <input type="checkbox" id="hiresDet" />
               <span>远景小人模式（更慢 · 找小角色）</span>
@@ -188,7 +200,11 @@
           <button id="btnExportImg" class="primary" disabled>导出调色图</button>
           <button id="btnShareImg" class="primary" hidden>保存到照片 / 分享</button>
           <button id="btnExportCompare" disabled>导出对比图</button>
+          <button id="btnExportWipe" disabled>导出滑动对比动图</button>
         </div>
+        <input type="file" id="batchFiles" accept="image/jpeg,image/png,image/webp,.heic,.heif" multiple hidden />
+        <button id="btnBatchExport" disabled>批量套用当前风格并导出</button>
+        <div class="export-note">选择多张实景照片，依次按当前动画截图与调色参数导出 JPEG；浏览器可能会询问是否允许多个下载。</div>
         <details class="adv">
           <summary>更多导出与预设 · 布局 / LUT / 预设</summary>
           <div class="d-body">
@@ -198,7 +214,13 @@
                 <option value="updown">上下对比（动画 / 实景）</option>
                 <option value="leftright">左右对比</option>
                 <option value="triple">三联（动画 · 原图 · 调色）</option>
+                <option value="postcard">巡礼卡片（此处 · 彼处）</option>
               </select>
+            </div>
+            <div class="ctrl-group compare-meta">
+              <label>卡片标题与地点（可选）</label>
+              <input id="compareTitle" maxlength="48" placeholder="例如：摇曳露营△ · 伊豆" />
+              <input id="comparePlace" maxlength="80" placeholder="地点；照片含 GPS 时会自动附上坐标" />
             </div>
             <button id="btnExportLut" disabled>导出高精度 .cube LUT</button>
             <div class="export-note">65³ LUT 含影调/色彩/饱和度；不含天空分区与辉光。</div>
@@ -216,8 +238,12 @@
               <div class="export-note">当前参数会自动恢复；图片不会写入浏览器存储。</div>
             </div>
             <div class="model-cache">
-              <div id="modelCacheStatus">正在检查 AI 模型缓存…</div>
-              <button id="btnCacheModels" class="small">缓存全部 AI 模型</button>
+              <div id="modelCacheStatus">正在检查 AI 离线包…</div>
+              <div id="modelCacheHint" class="export-note">基础调色不需要下载 AI 模型。出门前可在 Wi‑Fi 下下载自动抠图离线包。</div>
+              <button id="btnCacheModels" class="small">下载自动抠图离线包（约 127MB）</button>
+              <button id="btnCacheSam" class="small">下载 SAM 高质量兜底包（约 38MB）</button>
+              <button id="btnClearModelCache" class="small">删除 AI 离线包</button>
+              <button id="btnExportDiagnostics" class="small">导出诊断信息（排错用）</button>
               <div id="deviceStatus" class="export-note"></div>
             </div>
           </div>
@@ -231,7 +257,7 @@
 
   <div id="lassoModal" class="lasso-modal" hidden>
     <div class="lasso-head">
-      <span>在截图上圈出要抠的角色——随手画个圈就行，不必精确贴边</span>
+      <span id="lassoTip">在截图上圈出要抠的角色——随手画个圈就行，不必精确贴边</span>
       <div class="lasso-actions">
         <button id="btnLassoRun" class="primary small" disabled>抠取圈选区域</button>
         <button id="btnLassoClear" class="small">重画</button>

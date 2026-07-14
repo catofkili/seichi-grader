@@ -1,6 +1,6 @@
 // sw.js — 模型持久缓存。
-// ONNX 模型（约 190MB）与 onnxruntime-web 运行时按 cache-first 策略钉进 Cache Storage：
-// 首次下载后二次访问秒开、离线可用。其余请求不拦截（开发时改代码即时生效）。
+// ONNX 模型与 onnxruntime-web 运行时采用 cache-first；它们仅在用户按需下载离线包
+// 或实际运行 AI 时进入 Cache Storage。其余请求不拦截（开发时改代码即时生效）。
 const CACHE = 'seichi-models-v2';
 const APP_CACHE = 'seichi-app-v5';
 const APP_SHELL = [

@@ -23,6 +23,8 @@ const CSS = `
 .vf-modes{position:absolute;bottom:96px;left:0;right:0;display:flex;gap:6px;justify-content:center;flex-wrap:wrap;padding:0 10px;z-index:3;}
 .vf-modes button{background:#0007;border:1px solid #fff3;color:#fff;border-radius:18px;padding:7px 12px;font-size:12.5px;}
 .vf-modes button.on{background:#2f6df0;border-color:#2f6df0;}
+.vf-modes.compact button:not(.on):not(.vf-more){display:none;}
+.vf-modes .vf-more{border-style:dashed;color:#cdd3dd;}
 .vf-bottom{position:absolute;bottom:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;
   padding:14px 22px calc(14px + env(safe-area-inset-bottom));background:linear-gradient(#0000,#000a);z-index:3;}
 .vf-shutter{width:70px;height:70px;border-radius:50%;background:#fff;border:4px solid #fff6;flex:0 0 auto;}
@@ -92,6 +94,7 @@ function launchViewfinder(animeSource) {
 
     // 模式按钮
     const modesBox = $('.vf-modes');
+    modesBox.classList.add('compact');
     MODE_LABELS.forEach(([mode, label], i) => {
       const b = document.createElement('button'); b.textContent = label; b.dataset.mode = mode;
       if (i === 0) b.classList.add('on');
@@ -102,6 +105,14 @@ function launchViewfinder(animeSource) {
       });
       modesBox.appendChild(b);
     });
+    // 户外拍摄绝大多数时候只要半透明。其余模式保留，但不抢占首屏空间。
+    const moreModes = document.createElement('button');
+    moreModes.className = 'vf-more'; moreModes.textContent = '更多叠加';
+    moreModes.addEventListener('click', () => {
+      const expanded = modesBox.classList.toggle('compact');
+      moreModes.textContent = expanded ? '更多叠加' : '收起模式';
+    });
+    modesBox.appendChild(moreModes);
 
     $('[data-ctl="opacity"]').addEventListener('input', (e) => {
       renderer.setOpacity(+e.target.value / 100);
