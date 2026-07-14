@@ -375,3 +375,43 @@ details.sec-d .extract-box { gap: 8px; }
   .input-row .drop { min-height: 128px; }
   .input-row .thumb { height: 128px; }
 }
+
+/* ==================== 户外强光模式 ==================== */
+.top-actions { display: flex; align-items: center; gap: 10px; }
+.sun-toggle {
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
+  border-radius: 20px; padding: 7px 14px; font-size: 12.5px; white-space: nowrap;
+}
+.sun-toggle[aria-pressed="true"] {
+  background: #f5c542; border-color: #f5c542; color: #241a00; font-weight: 700;
+}
+
+/* 强光模式：整体拉高界面亮度与对比、加粗描边、放大控件。
+   刻意不碰 .compare 里的调色预览画布——预览必须显示真实调色结果，
+   一旦为了"看清"而提亮，用户在阳光下判断的就不是真实色彩了。 */
+:root.sunlight {
+  --bg: #05070a;
+  --panel: #262d3b;
+  --panel-2: #323b4d;
+  --line: #61708c;
+  --text: #ffffff;
+  --muted: #c9d1e2;
+  --accent: #ff487d;
+  --accent-2: #4aa3ff;
+}
+.sunlight body { font-weight: 500; }
+.sunlight .top { background: linear-gradient(180deg, #2a3241, #12161d); }
+.sunlight .sec-title, .sunlight .drop-inner strong, .sunlight h1,
+.sunlight .char-chip, .sunlight .badge { color: #fff; }
+.sunlight button { border-width: 1.5px; font-weight: 600; }
+.sunlight details.adv > summary, .sunlight details.sec-d > summary { color: #eef2fa; }
+.sunlight .drop { border-width: 2px; }
+.sunlight input[type=range] { filter: contrast(1.15); }
+.sunlight .workflow li { color: #eef2fa; }
+/* 对比条把手在强光下更醒目 */
+.sunlight .handle { width: 3px; }
+.sunlight .badge { background: rgba(0,0,0,.78); }
+@media (pointer: coarse) {
+  .sunlight button, .sunlight select { min-height: 50px; }
+  .sunlight input[type=range] { min-height: 40px; }
+}

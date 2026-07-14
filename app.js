@@ -1373,6 +1373,22 @@ $('btnPresetDelete').addEventListener('click', () => {
 try { applySettings(JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null'), false); } catch { /* 忽略损坏的旧状态 */ }
 refreshPresetList();
 
+// ---------- 户外强光模式 ----------
+// 拉高界面对比/亮度、增强取景叠加可读性；刻意不改调色预览画布以保色准。
+const SUNLIGHT_KEY = 'seichi-sunlight';
+function setSunlight(on) {
+  document.documentElement.classList.toggle('sunlight', on);
+  const btn = $('btnSunlight');
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  btn.textContent = on ? '☀️ 强光·开' : '☀️ 强光';
+  try { localStorage.setItem(SUNLIGHT_KEY, on ? '1' : '0'); } catch { /* 隐私模式 */ }
+  if (state.photo) syncCanvasSize();
+}
+$('btnSunlight').addEventListener('click', () => {
+  setSunlight(!document.documentElement.classList.contains('sunlight'));
+});
+try { if (localStorage.getItem(SUNLIGHT_KEY) === '1') setSunlight(true); } catch { /* 忽略 */ }
+
 // ---------- 模型持久缓存状态 ----------
 const MODEL_CACHE = 'seichi-models-v2';
 // 运行时实际读取 ISNet 的三个分块（见 ort-env.js），不是同名的整文件。

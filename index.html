@@ -23,10 +23,14 @@
           <p class="sub">提取动画截图的影调与配色，套用到实景照片</p>
         </div>
       </div>
-      <nav class="top-nav">
-        <span class="tag">CDF 影调 · MKL 色彩</span>
-        <span class="tag">可导出 .cube LUT</span>
-      </nav>
+      <div class="top-actions">
+        <button id="btnSunlight" class="sun-toggle" aria-pressed="false"
+          title="户外强光模式：拉高界面对比与亮度、增强取景叠加可读性。不改变调色预览，保证色准。">☀️ 强光</button>
+        <nav class="top-nav">
+          <span class="tag">CDF 影调 · MKL 色彩</span>
+          <span class="tag">可导出 .cube LUT</span>
+        </nav>
+      </div>
     </div>
   </header>
 
@@ -267,6 +271,6 @@
     <div class="lasso-stage"><canvas id="lassoCanvas"></canvas></div>
   </div>
 
-  <script type="module" src="./app.js?v=20260712i"></script>
+  <script type="module" src="./app.js?v=20260713a"></script>
 </body>
 </html>

@@ -38,6 +38,9 @@ const CSS = `
 .vf-toast{position:absolute;top:56px;left:50%;transform:translateX(-50%);background:#000b;border:1px solid #fff3;
   border-radius:16px;padding:6px 14px;font-size:12.5px;z-index:4;opacity:0;transition:opacity .2s;}
 .vf-toast.show{opacity:1;}
+/* 户外强光模式：叠加层加对比，控件描边更亮，阳光下看得清 */
+.vf-root.sunlight .vf-overlay{filter:contrast(1.35) brightness(1.18) saturate(1.1);}
+.vf-root.sunlight .vf-topbar button,.vf-root.sunlight .vf-side button,.vf-root.sunlight .vf-modes button{border-color:#fff8;background:#000a;}
 `;
 
 function injectStyle() {
@@ -55,6 +58,9 @@ function launchViewfinder(animeSource) {
   return new Promise((resolve) => {
     const root = document.createElement('div');
     root.className = 'vf-root';
+    // 继承主界面的户外强光模式：叠加层加对比、控件描边更亮
+    const sunlight = document.documentElement.classList.contains('sunlight');
+    if (sunlight) root.classList.add('sunlight');
     root.innerHTML = `
       <div class="vf-stage">
         <video playsinline muted></video>
@@ -89,6 +95,12 @@ function launchViewfinder(animeSource) {
     const session = new CameraSession();
     const renderer = new OverlayRenderer(animeSource);
     let raf = 0, frozenState = false, qualityMode = false, closed = false;
+    // 强光下默认叠加更实，阳光反光里也看得见参考轮廓
+    if (sunlight) {
+      renderer.setOpacity(0.72);
+      const s = $('[data-ctl="opacity"]'); if (s) s.value = 72;
+      const lbl = $('[data-label="opacity"]'); if (lbl) lbl.textContent = '透明 72%';
+    }
 
     const showToast = (t) => { toast.textContent = t; toast.classList.add('show'); clearTimeout(showToast._t); showToast._t = setTimeout(() => toast.classList.remove('show'), 1800); };
 
