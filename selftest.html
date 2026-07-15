@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>seichi-grader · 回归自测</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; background:#0e1014; color:#e6e9ef;
+    font:14px/1.6 -apple-system,"PingFang SC",sans-serif; padding:20px; max-width:860px; margin:0 auto; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  .sub { color:#8a93a3; font-size:12.5px; margin:0 0 16px; }
+  .bar { display:flex; gap:10px; align-items:center; margin:14px 0; }
+  button { background:#1f242e; color:#e6e9ef; border:1px solid #2a313d; border-radius:9px;
+    padding:9px 16px; font-size:13px; cursor:pointer; }
+  button:hover { filter:brightness(1.2); }
+  .summary { font-size:15px; font-weight:600; }
+  .summary.pass { color:#63d29b; } .summary.fail { color:#ff6b6b; } .summary.run { color:#ffcf6b; }
+  table { border-collapse:collapse; width:100%; font-size:13px; margin-top:8px; }
+  th { text-align:left; color:#8a93a3; font-weight:600; border-bottom:2px solid #2a313d; padding:7px 10px 7px 0; font-size:12px; }
+  td { border-bottom:1px solid #1d232f; padding:8px 10px 8px 0; vertical-align:top; }
+  td.detail { color:#8a93a3; font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; font-size:11px; font-weight:700; padding:2px 9px; border-radius:20px; white-space:nowrap; }
+  .pill.pass { background:#16302a; color:#63d29b; }
+  .pill.fail { background:#3a1d20; color:#ff6b6b; }
+  .pill.skip { background:#2b2f38; color:#a7b0c0; }
+  .group { margin-top:22px; }
+  .group h2 { font-size:13px; letter-spacing:.05em; color:#c9d1e2; margin:0 0 4px; }
+</style>
+</head>
+<body>
+  <h1>回归自测</h1>
+  <p class="sub">在本地 dev 服务器（localhost）运行。固化 skyMask 边界 / 调色恒等 / LUT 往返三类回归，取代手测。<br>
+  缺失的本地素材（gitignore 的动画/照片测试图）会标记为「跳过」，不算失败。</p>
+  <div class="bar">
+    <button id="run">重新运行</button>
+    <span id="summary" class="summary run">运行中…</span>
+  </div>
+  <div id="results"></div>
+
+<script type="module">
+import { skyMask, labStats, makeLumaCdfMap, makeGradeTransform, applyTransfer, generateCubeLUT, rgb2lab, lab2rgb } from './color.js';
+
+const MAX = 1400;
+async function loadImageData(url) {
+  const resp = await fetch(url);
+  if (!resp.ok) return null; // 素材缺失 → 跳过
+  const bmp = await createImageBitmap(await resp.blob());
+  const s = Math.min(1, MAX / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  bmp.close();
+  return c.getContext('2d').getImageData(0, 0, c.width, c.height);
+}
+
+// ---- 断言收集 ----
+const cases = [];
+function add(group, name, status, detail) { cases.push({ group, name, status, detail }); }
+
+// ---- 1) skyMask 四件套回归 ----
+async function testSkyMask() {
+  const spec = [
+    ['test-water.jpg', false, '水面特写必须判「无天空」'],
+    ['test-dusk.jpg', true, '黄昏必须判「有天空」'],
+    ['test-izu-scenery.jpg', true, '蓝天风景必须判「有天空」'],
+    ['test-izu-multi.jpg', true, '多人蓝天必须判「有天空」'],
+  ];
+  for (const [file, wantValid, why] of spec) {
+    const img = await loadImageData('./' + file);
+    if (!img) { add('skyMask', file, 'skip', '本地素材缺失'); continue; }
+    const r = skyMask(img);
+    const ok = r.valid === wantValid;
+    add('skyMask', file, ok ? 'pass' : 'fail',
+      `${why} · 实得 valid=${r.valid}（${r.reason || ''}）`);
+  }
+}
+
+// ---- 2) 调色恒等：强度 0 → 逐像素不变 ----
+async function testIdentity() {
+  const photo = await loadImageData('./test-izu-scenery.jpg') || await loadImageData('./web-photo-omuro.jpg');
+  const anime = await loadImageData('./test-anime-hills.jpg') || photo;
+  if (!photo || !anime) { add('调色', '恒等（强度0）', 'skip', '本地素材缺失'); return; }
+  const src = labStats(photo, 2, { cov: true });
+  const tgt = labStats(anime, 2, { cov: true });
+  const map = makeLumaCdfMap(photo, anime, {});
+  const tf = makeGradeTransform(src, tgt, { mode: 'tone', strength: 0, mapL: map.build(0), satBoost: 0 });
+  const out = applyTransfer(photo, tf);
+  let maxDiff = 0;
+  const a = photo.data, b = out.data;
+  for (let i = 0; i < a.length; i += 40) for (let k = 0; k < 3; k++) maxDiff = Math.max(maxDiff, Math.abs(a[i + k] - b[i + k]));
+  add('调色', '恒等（强度0 逐像素不变）', maxDiff <= 1 ? 'pass' : 'fail', `最大像素差 ${maxDiff}（阈值 ≤1）`);
+}
+
+// ---- 3) LUT 往返：65³（与导出规格一致）三线性 vs 直接 transform ----
+// 注意必须测 65³：33³ 在色域边缘软肩弯曲处的固有插值误差可达 5+/255，
+// 与导出质量无关（2026-07-14 实测 33³=5.4 / 65³=2.2，最差点在高饱和青绿）。
+async function testLutRoundtrip() {
+  const photo = await loadImageData('./test-izu-scenery.jpg') || await loadImageData('./web-photo-omuro.jpg');
+  const anime = await loadImageData('./test-anime-hills.jpg') || photo;
+  if (!photo || !anime) { add('LUT', '65³ 往返', 'skip', '本地素材缺失'); return; }
+  const src = labStats(photo, 2, { cov: true });
+  const tgt = labStats(anime, 2, { cov: true });
+  const map = makeLumaCdfMap(photo, anime, {});
+  const tf = makeGradeTransform(src, tgt, { mode: 'tone', strength: 0.85, mapL: map.build(0.85), satBoost: 0.15 });
+  const N = 65, mx = N - 1;
+  const rows = generateCubeLUT(tf, N, 't').split('\n').slice(4).map(l => l.split(' ').map(Number));
+  const at = (x, y, z) => rows[z * N * N + y * N + x];
+  const lookup = (r, g, b) => {
+    const fx = r / 255 * mx, fy = g / 255 * mx, fz = b / 255 * mx;
+    const x0 = Math.floor(fx), y0 = Math.floor(fy), z0 = Math.floor(fz);
+    const x1 = Math.min(mx, x0 + 1), y1 = Math.min(mx, y0 + 1), z1 = Math.min(mx, z0 + 1);
+    const dx = fx - x0, dy = fy - y0, dz = fz - z0, o = [0, 0, 0];
+    for (let k = 0; k < 3; k++) {
+      const c00 = at(x0,y0,z0)[k]*(1-dx)+at(x1,y0,z0)[k]*dx, c10 = at(x0,y1,z0)[k]*(1-dx)+at(x1,y1,z0)[k]*dx;
+      const c01 = at(x0,y0,z1)[k]*(1-dx)+at(x1,y0,z1)[k]*dx, c11 = at(x0,y1,z1)[k]*(1-dx)+at(x1,y1,z1)[k]*dx;
+      o[k] = ((c00*(1-dy)+c10*dy)*(1-dz)+(c01*(1-dy)+c11*dy)*dz) * 255;
+    }
+    return o;
+  };
+  let maxErr = 0;
+  for (let t = 0; t < 3000; t++) {
+    const r = (t * 61) % 256, g = (t * 127) % 256, b = (t * 197) % 256;
+    const lab = rgb2lab(r, g, b); const [nL, na, nb] = tf(lab[0], lab[1], lab[2]);
+    const direct = lab2rgb(nL, na, nb); const via = lookup(r, g, b);
+    for (let k = 0; k < 3; k++) maxErr = Math.max(maxErr, Math.abs(direct[k] - via[k]));
+  }
+  add('LUT', '65³ 三线性往返（=导出规格）', maxErr <= 3 ? 'pass' : 'fail', `最大误差 ${maxErr.toFixed(1)}/255（阈值 ≤3）`);
+}
+
+// ---- 运行 + 渲染 ----
+async function run() {
+  cases.length = 0;
+  const sum = document.getElementById('summary');
+  sum.className = 'summary run'; sum.textContent = '运行中…';
+  document.getElementById('results').innerHTML = '';
+  try {
+    await testSkyMask();
+    await testIdentity();
+    await testLutRoundtrip();
+  } catch (e) {
+    add('运行', '异常', 'fail', String(e && e.message || e));
+  }
+  render();
+}
+
+function render() {
+  const groups = {};
+  for (const c of cases) (groups[c.group] ||= []).push(c);
+  let html = '';
+  for (const [g, list] of Object.entries(groups)) {
+    html += `<div class="group"><h2>${g}</h2><table><tr><th style="width:44px">结果</th><th style="width:220px">用例</th><th>说明</th></tr>`;
+    for (const c of list) html += `<tr><td><span class="pill ${c.status}">${c.status.toUpperCase()}</span></td><td>${c.name}</td><td class="detail">${c.detail}</td></tr>`;
+    html += '</table></div>';
+  }
+  document.getElementById('results').innerHTML = html;
+  const fail = cases.filter(c => c.status === 'fail').length;
+  const pass = cases.filter(c => c.status === 'pass').length;
+  const skip = cases.filter(c => c.status === 'skip').length;
+  const sum = document.getElementById('summary');
+  sum.className = 'summary ' + (fail ? 'fail' : 'pass');
+  sum.textContent = fail ? `✗ ${fail} 项失败 · ${pass} 通过 · ${skip} 跳过`
+                         : `✓ 全部通过（${pass} 通过 · ${skip} 跳过）`;
+}
+
+document.getElementById('run').addEventListener('click', run);
+run();
+</script>
+</body>
+</html>
