@@ -324,4 +324,93 @@ function alphaBBox(alpha, w, h, thr = 16) {
   return cnt ? { bbox: { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 }, coverage: cnt / (w * h) } : { bbox: null, coverage: 0 };
 }
 
-export { extractForeground, cutoutCanvas, cleanupAlpha, alphaBBox };
+// 近闭合轮廓补洞。普通 fillHoles 只能填「完全被围死」的洞；轮廓上有小缺口时，
+// 脸/手/服装内部会经缺口连到外部背景而漏填。策略：
+//   1) 强闭运算（半径 seal）临时封住缺口；
+//   2) 边界 flood 找出「封缝后仍被围住」的候选洞；
+//   3) 逐洞颜色仲裁——动画是平涂：真镂空透出的是外部背景色，
+//      假洞（脸、手、衣服内部）颜色接近洞周前景，只填后者；
+//   4) 面积上限只防病态情况（洞占裁剪区一半以上不填）——「只抠到外轮廓、
+//      内部整个是洞」正是要治的主症，所以不能按前景占比设限，把关交给颜色仲裁。
+// 直接原地把接受的洞在 alpha 上置 255；返回补入的像素数。
+function fillNearlyClosedHoles(alpha, w, h, imageData, opts = {}) {
+  const thr = opts.thr ?? 128;
+  const seal = opts.seal ?? 3;
+  const maxFrac = opts.maxHoleFrac ?? 0.5;
+  const bin = new Uint8Array(w * h);
+  let fgArea = 0;
+  for (let i = 0; i < w * h; i++) { if (alpha[i] >= thr) { bin[i] = 1; fgArea++; } }
+  if (!fgArea) return 0;
+  let closed = morph(bin, w, h, seal, true);
+  closed = morph(closed, w, h, seal, false);
+  // 封缝后仍连着边界的背景 = 确定的外部
+  const outside = new Uint8Array(w * h);
+  const stack = [];
+  const pushOut = (p) => { if (!closed[p] && !outside[p]) { outside[p] = 1; stack.push(p); } };
+  for (let x = 0; x < w; x++) { pushOut(x); pushOut((h - 1) * w + x); }
+  for (let y = 0; y < h; y++) { pushOut(y * w); pushOut(y * w + w - 1); }
+  while (stack.length) {
+    const p = stack.pop(); const x = p % w, y = (p / w) | 0;
+    if (x > 0) pushOut(p - 1); if (x < w - 1) pushOut(p + 1);
+    if (y > 0) pushOut(p - w); if (y < h - 1) pushOut(p + w);
+  }
+  const d = imageData.data;
+  // 外部背景平均色（原本就不是前景、且确定连外的像素）
+  let br = 0, bgc = 0, bb = 0, bn = 0;
+  for (let i = 0; i < w * h; i++) {
+    if (outside[i] && !bin[i]) { const p = i * 4; br += d[p]; bgc += d[p + 1]; bb += d[p + 2]; bn++; }
+  }
+  if (!bn) return 0;
+  br /= bn; bgc /= bn; bb /= bn;
+  const seen = new Uint8Array(w * h);
+  let filled = 0;
+  for (let s = 0; s < w * h; s++) {
+    if (bin[s] || closed[s] || outside[s] || seen[s]) continue;
+    // 收集一个洞（封缝后被围住的背景连通域）
+    const hole = [];
+    const st = [s]; seen[s] = 1;
+    while (st.length) {
+      const p = st.pop(); hole.push(p);
+      const x = p % w, y = (p / w) | 0;
+      for (const n of [x > 0 ? p - 1 : -1, x < w - 1 ? p + 1 : -1, y > 0 ? p - w : -1, y < h - 1 ? p + w : -1]) {
+        if (n >= 0 && !bin[n] && !closed[n] && !outside[n] && !seen[n]) { seen[n] = 1; st.push(n); }
+      }
+    }
+    if (hole.length > w * h * maxFrac) continue;
+    // 洞平均色
+    let hr = 0, hg = 0, hb = 0;
+    for (const p of hole) { const q = p * 4; hr += d[q]; hg += d[q + 1]; hb += d[q + 2]; }
+    hr /= hole.length; hg /= hole.length; hb /= hole.length;
+    // 从洞向外做深度受限 BFS：撞到真前景就采样「洞周前景色」，
+    // 途经的封缝带像素记为 extra（接受时和洞一起填，顺便堵上缺口通道）
+    let rr = 0, rg = 0, rb = 0, rn = 0;
+    const extra = [];
+    let ring = hole.slice();
+    const walked = new Uint8Array(w * h);
+    for (const p of hole) walked[p] = 1;
+    for (let depth = 0; depth < seal + 2 && ring.length; depth++) {
+      const next = [];
+      for (const p of ring) {
+        const x = p % w, y = (p / w) | 0;
+        for (const n of [x > 0 ? p - 1 : -1, x < w - 1 ? p + 1 : -1, y > 0 ? p - w : -1, y < h - 1 ? p + w : -1]) {
+          if (n < 0 || walked[n]) continue;
+          walked[n] = 1;
+          if (bin[n]) { const q = n * 4; rr += d[q]; rg += d[q + 1]; rb += d[q + 2]; rn++; }
+          else { extra.push(n); next.push(n); }
+        }
+      }
+      ring = next;
+    }
+    if (!rn) continue;
+    rr /= rn; rg /= rn; rb /= rn;
+    const dRing = (hr - rr) ** 2 + (hg - rg) ** 2 + (hb - rb) ** 2;
+    const dBg = (hr - br) ** 2 + (hg - bgc) ** 2 + (hb - bb) ** 2;
+    if (dRing < dBg) {
+      for (const p of hole) { if (alpha[p] < 255) { alpha[p] = 255; filled++; } }
+      for (const p of extra) { if (alpha[p] < 255) { alpha[p] = 255; filled++; } }
+    }
+  }
+  return filled;
+}
+
+export { extractForeground, cutoutCanvas, cleanupAlpha, alphaBBox, fillNearlyClosedHoles };

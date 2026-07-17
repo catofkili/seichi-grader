@@ -3,7 +3,7 @@ import {
   imageDataToLab, labStats, makeLabTransform, makeLumaCdfMap, makeGradeTransform,
   applyTransfer, applyTransferRegioned, skyMask, makeBloomLayer, applyBloom, extractPalette, generateCubeLUT,
 } from './color.js?v=20260712d';
-import { extractForeground, cutoutCanvas, cleanupAlpha, alphaBBox } from './segment.js';
+import { extractForeground, cutoutCanvas, cleanupAlpha, alphaBBox, fillNearlyClosedHoles } from './segment.js';
 import { mergeCharacterAlphas } from './ai-segment.js';
 import { releaseAllSessions } from './ort-env.js';
 import { embedImage, cosineSimilarity, SCENE_EMBED_MODEL_URL } from './embed.js';
@@ -24,8 +24,11 @@ const state = {
   gradedData: null,
   transform: null,
   cutout: null,        // 清理后的角色 canvas（bbox 裁剪）
-  rawAlpha: null,      // 抠图原始 alpha（Uint8，与 anime 同尺寸），供阈值/收边重算
-  forcedAlpha: null,   // 用户蓝色画笔强制保留区；始终盖过算法结果与阈值/收边
+  rawAlpha: null,      // 抠图原始 alpha（Uint8，与 anime 同尺寸），只属算法结果，供阈值/收边重算
+  maskOps: [],         // 手工修补操作，按时间序重放：keep(蓝笔)/keepRegion(点选补块)/erase(橡皮擦)
+  opsOverlay: null,    // maskOps 重放结果缓存 Uint8Array：0 无操作 / 1 强制保留 / 2 强制擦除
+  opsTint: null,       // 强制保留区的蓝色显示层 canvas（圈选弹窗里叠加）
+  finalAlpha: null,    // applyRefine 的最终输出 alpha（蒙版预览与点选连通域都以它为准）
   charSeg: null,       // AI 检测流水线结果 { chars, included:Set }，供勾选角色重合并
   rawW: 0, rawH: 0,
   charPos: { cx: 0.5, cy: 0.62 }, // 角色中心在场景中的归一化位置
@@ -317,7 +320,7 @@ function recompute() {
   redrawComparisonReference();
   syncCanvasSize();
   $('compareModes').hidden = false;
-  ['btnOpenExportHub', 'btnExportImg', 'btnExportCompare', 'btnExportCompareLayout', 'btnExportWipe', 'btnExportMorph', 'btnExportLut', 'btnBatchExport'].forEach(id => $(id).disabled = false);
+  ['btnOpenExportHub', 'btnExportImg', 'btnExportCompare', 'btnExportCompareLayout', 'btnExportWipe', 'btnExportMorph', 'btnExportApng', 'btnExportLut', 'btnBatchExport'].forEach(id => $(id).disabled = false);
   updateWorkflow();
   const modeText = mode === 'tone' ? '影调+色彩' : mode === 'full' ? '完整' : '仅色彩';
   setStatus(`已调色 · ${modeText} · 强度 ${$('strength').value}% · 天空分区：${useRegion ? '已启用' : `未启用（${skyReason}）`}`);
@@ -518,6 +521,101 @@ function compositeCharacter(canvas, record = true) {
   if (record) state.charDraw = { dx, dy, dw, dh };
 }
 
+// ---------- 手工修补操作（maskOps）：蓝笔 / 点选补块 / 橡皮擦 ----------
+// rawAlpha 永远只属算法结果；一切手工修正记录成操作列表，按时间序重放成 opsOverlay，
+// 在 applyRefine 里盖到算法输出上。撤销 = 弹出最后一项全量重放。
+// 这样勾选角色重建 rawAlpha、调阈值/收边都不会丢手工修正，且每一步可逆。
+function rebuildOpsOverlay() {
+  const w = state.rawW, h = state.rawH;
+  if (!w || !h || !state.maskOps.length) { state.opsOverlay = null; state.opsTint = null; return; }
+  const overlay = new Uint8Array(w * h);
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  for (const op of state.maskOps) {
+    if (op.type === 'keepRegion') {
+      for (const i of op.idx) overlay[i] = 1;
+      continue;
+    }
+    ctx.clearRect(0, 0, w, h);
+    ctx.strokeStyle = '#fff'; ctx.fillStyle = '#fff';
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    if (op.type === 'keep') {
+      const { pts, width } = op.stroke;
+      ctx.lineWidth = width;
+      ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.stroke();
+      if (pts.length === 1) { ctx.beginPath(); ctx.arc(pts[0][0], pts[0][1], width / 2, 0, Math.PI * 2); ctx.fill(); }
+    } else { // erase：圈选多边形填充
+      const pts = op.pts;
+      ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.closePath(); ctx.fill();
+    }
+    const d = ctx.getImageData(0, 0, w, h).data;
+    const v = op.type === 'keep' ? 1 : 2;
+    for (let i = 0, p = 3; p < d.length; i++, p += 4) if (d[p]) overlay[i] = v;
+  }
+  state.opsOverlay = overlay;
+  // 蓝色提示层：弹窗第二步里给强制保留的部分染蓝
+  const tint = document.createElement('canvas'); tint.width = w; tint.height = h;
+  const timg = new ImageData(w, h);
+  for (let i = 0, p = 0; i < overlay.length; i++, p += 4) {
+    if (overlay[i] === 1) {
+      timg.data[p] = 88; timg.data[p + 1] = 166; timg.data[p + 2] = 255; timg.data[p + 3] = 64;
+    }
+  }
+  tint.getContext('2d').putImageData(timg, 0, 0);
+  state.opsTint = tint;
+}
+
+function refreshMaskUndoButtons() {
+  const none = !state.maskOps.length;
+  $('btnMaskUndo').disabled = none;
+  const inModal = $('btnLassoUndo');
+  if (inModal) inModal.disabled = none;
+}
+
+// 提交一次修补：入列 → 重放 → 重算遮罩。返回 applyRefine 的覆盖率。
+function pushMaskOp(op) {
+  state.maskOps.push(op);
+  rebuildOpsOverlay();
+  const cov = applyRefine(false);
+  refreshMaskUndoButtons();
+  return cov;
+}
+
+function undoMaskOp() {
+  if (!state.maskOps.length) return;
+  state.maskOps.pop();
+  rebuildOpsOverlay();
+  applyRefine(false);
+  refreshMaskUndoButtons();
+  if (!$('lassoModal').hidden && lassoState.stage === 'refine') {
+    rebuildLassoMaskOverlay();
+    lassoRedraw();
+  }
+  $('extractStatus').textContent = state.maskOps.length
+    ? `已撤销 · 还剩 ${state.maskOps.length} 步修补可撤销`
+    : '已撤销全部手工修补';
+}
+
+// ---------- AI 互斥：模型/圈选/找图共用一个开关，避免双 ORT 堆并存 ----------
+function setAIBusy(on) {
+  state.aiBusy = on;
+  refreshAIEntryButtons();
+}
+
+// 各 AI 入口按钮的使能条件集中在这里；busy 时全部禁用
+function refreshAIEntryButtons() {
+  const busy = state.aiBusy;
+  $('btnExtract').disabled = busy || !state.anime;
+  $('btnExtractAI').disabled = busy || !state.anime;
+  $('btnLasso').disabled = busy || !state.anime;
+  $('btnMatchScene').disabled = busy || !state.anime;
+  $('btnEraseMask').disabled = busy || !state.cutout;
+}
+
 // 抠图后/调参后：从 rawAlpha 重建清理过的角色 cutout
 function applyRefine(resetPos) {
   if (!state.rawAlpha || !state.anime) return;
@@ -525,9 +623,15 @@ function applyRefine(resetPos) {
   const thr = parseInt($('maskThr').value, 10);
   const erode = parseInt($('maskErode').value, 10);
   const clean = cleanupAlpha(state.rawAlpha, w, h, { thr, erode, featherR: 2 });
-  if (state.forcedAlpha?.length === clean.length) {
-    for (let i = 0; i < clean.length; i++) if (state.forcedAlpha[i]) clean[i] = 255;
+  // 手工修补层（蓝笔/点选/擦除的时间序重放结果）盖在算法输出之上
+  if (state.opsOverlay?.length === clean.length) {
+    const ov = state.opsOverlay;
+    for (let i = 0; i < clean.length; i++) {
+      if (ov[i] === 1) clean[i] = 255;
+      else if (ov[i] === 2) clean[i] = 0;
+    }
   }
+  state.finalAlpha = clean;
   const { bbox, coverage } = alphaBBox(clean, w, h);
   state.cutout = bbox ? cutoutCanvas(state.anime.imgData, { alpha: clean, bbox }) : null;
   if (bbox) {
@@ -546,7 +650,7 @@ function applyRefine(resetPos) {
   }
   invalidateHarmonize();
   $('btnExportCharacter').disabled = !state.cutout;
-  $('btnEraseMask').disabled = !state.cutout;
+  refreshAIEntryButtons();
   // 新抠图默认按动画里的原位、原比例落地（照片已与动画同构图），拖拽/滑杆仍可自由调整
   if (resetPos) {
     state.charPos = state.charBase ? { cx: state.charBase.cx, cy: state.charBase.cy } : { cx: 0.5, cy: 0.62 };
@@ -589,13 +693,11 @@ async function handleAnimeData(data) {
   };
   state.gradeCache = null;
   renderPalette(extractPalette(data.imgData, 6, 4, { ignoreBottomRatio: $('ignoreSub').checked ? 0.12 : 0 }));
-  state.cutout = null; state.rawAlpha = null; state.forcedAlpha = null; setCharSeg(null); invalidateHarmonize();
-  $('btnExtract').disabled = false;
-  $('btnExtractAI').disabled = false;
-  $('btnLasso').disabled = false;
-  $('btnMatchScene').disabled = false;
+  state.cutout = null; state.rawAlpha = null; setCharSeg(null); invalidateHarmonize();
+  state.maskOps = []; state.opsOverlay = null; state.opsTint = null; state.finalAlpha = null;
+  refreshMaskUndoButtons();
+  refreshAIEntryButtons();
   $('matchResults').hidden = true; // 旧结果按旧截图排序，换截图后作废
-  $('btnEraseMask').disabled = true;
   $('btnExportCharacter').disabled = true;
   $('extractStatus').textContent = '点击「扒取人物」试试';
   $('btnAlign').disabled = !state.photo;
@@ -750,9 +852,8 @@ $('btnExtract').addEventListener('click', () => {
 
 $('btnExtractAI').addEventListener('click', async () => {
   if (!state.anime) return;
-  const btn = $('btnExtractAI');
-  state.aiBusy = true;
-  btn.disabled = true; $('btnExtract').disabled = true; $('btnLasso').disabled = true;
+  if (state.aiBusy) { $('extractStatus').textContent = 'AI 任务进行中，请稍候…'; return; }
+  setAIBusy(true);
   $('btnExportImg').disabled = true;
   const onProgress = (recv, total) => {
     $('extractStatus').textContent = `下载模型 ${(recv / 1048576).toFixed(0)}/${(total / 1048576).toFixed(0)}MB`;
@@ -805,8 +906,7 @@ $('btnExtractAI').addEventListener('click', async () => {
     console.error(e);
     $('extractStatus').textContent = 'AI 抠图失败：' + (e.message || e);
   } finally {
-    state.aiBusy = false;
-    btn.disabled = false; $('btnExtract').disabled = false; $('btnLasso').disabled = false;
+    setAIBusy(false);
     if (state.gradedData) $('btnExportImg').disabled = false;
     updateModelCacheStatus();
   }
@@ -1364,7 +1464,7 @@ $('exportHubModal').addEventListener('click', (e) => { if (e.target === $('expor
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('exportHubModal').hidden) closeExportHub(); });
 document.querySelectorAll('[data-export-action]').forEach((card) => {
   card.addEventListener('click', () => {
-    const buttons = { image: 'btnExportImg', compare: 'btnExportCompare', wipe: 'btnExportWipe', morph: 'btnExportMorph', character: 'btnExportCharacter', batch: 'btnBatchExport', lut: 'btnExportLut' };
+    const buttons = { image: 'btnExportImg', compare: 'btnExportCompare', wipe: 'btnExportWipe', morph: 'btnExportMorph', apng: 'btnExportApng', character: 'btnExportCharacter', batch: 'btnBatchExport', lut: 'btnExportLut' };
     const target = $(buttons[card.dataset.exportAction]);
     if (!target || target.disabled) return;
     closeExportHub();
@@ -1494,7 +1594,8 @@ function gifLzw(indices) {
   reset(); write(clear);
   let prefix = indices[0];
   for (let i = 1; i < indices.length; i++) {
-    const value = indices[i], key = prefix + ',' + value;
+    // 数字键（prefix≤4095, value≤255）：比字符串拼接键少一次分配和哈希，1080p 帧提速明显
+    const value = indices[i], key = prefix * 256 + value;
     const known = dict.get(key);
     if (known != null) { prefix = known; continue; }
     write(prefix);
@@ -1544,12 +1645,21 @@ async function makeAnimeToSceneGif() {
     ctx.globalAlpha = realOpacity; ctx.drawImage(scene, 0, 0); ctx.globalAlpha = 1;
     const pixels = ctx.getImageData(0, 0, w, h).data;
     const indexed = new Uint8Array(w * h);
+    // 4×4 Bayer 有序抖动：256 色的天空/阴影渐变不再一圈圈色带，视觉上接近连续色
+    const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
     for (let p = 0, i = 0; p < indexed.length; p++, i += 4) {
       const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
       const hi = Math.max(r, g, b), lo = Math.min(r, g, b);
-      indexed[p] = hi - lo < 18
-        ? 216 + Math.round(((r + g + b) / 3) * 39 / 255)
-        : Math.round(r / 51) * 36 + Math.round(g / 51) * 6 + Math.round(b / 51);
+      const dith = BAYER[((p / w) & 3) * 4 + (p % w & 3)] / 16 - 0.5;
+      if (hi - lo < 18) {
+        const gray = Math.max(0, Math.min(39, Math.round(((r + g + b) / 3) * 39 / 255 + dith)));
+        indexed[p] = 216 + gray;
+      } else {
+        const qr = Math.max(0, Math.min(5, Math.round(r / 51 + dith)));
+        const qg = Math.max(0, Math.min(5, Math.round(g / 51 + dith)));
+        const qb = Math.max(0, Math.min(5, Math.round(b / 51 + dith)));
+        indexed[p] = qr * 36 + qg * 6 + qb;
+      }
     }
     const lzw = gifLzw(indexed);
     // disposal=1：下一帧直接盖上上一帧；不写循环扩展，GIF 结束在实景画面。
@@ -1573,6 +1683,110 @@ $('btnExportMorph').addEventListener('click', async () => {
   } catch (e) {
     console.error(e);
     setStatus('GIF 导出失败：' + (e.message || e));
+  } finally { btn.disabled = false; }
+});
+
+// ---------- APNG 高清动图：逐帧 PNG 原样拼装（acTL/fcTL/fdAT），全彩无损 ----------
+// GIF 天花板是 256 色；APNG 由浏览器原生播放、行为与 GIF 相同（自动播放、播完停在实景），
+// 编码零依赖：每帧用 canvas 自带的 PNG 编码，这里只负责按 APNG 规范拼 chunk。
+const PNG_CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c;
+  }
+  return t;
+})();
+
+function pngCrc32(bytes) {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) c = PNG_CRC_TABLE[(c ^ bytes[i]) & 255] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data) {
+  const out = new Uint8Array(12 + data.length);
+  const dv = new DataView(out.buffer);
+  dv.setUint32(0, data.length);
+  for (let i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i);
+  out.set(data, 8);
+  dv.setUint32(8 + data.length, pngCrc32(out.subarray(4, 8 + data.length)));
+  return out;
+}
+
+function pngChunksOf(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const chunks = [];
+  let pos = 8; // 跳过 PNG 签名
+  while (pos + 12 <= bytes.length) {
+    const len = ((bytes[pos] << 24) | (bytes[pos + 1] << 16) | (bytes[pos + 2] << 8) | bytes[pos + 3]) >>> 0;
+    const type = String.fromCharCode(bytes[pos + 4], bytes[pos + 5], bytes[pos + 6], bytes[pos + 7]);
+    chunks.push({ type, data: bytes.subarray(pos + 8, pos + 8 + len) });
+    pos += 12 + len;
+  }
+  return chunks;
+}
+
+async function makeAnimeToSceneApng() {
+  if (!state.anime || !state.gradedData) throw new Error('请先上传动画截图与实景照片');
+  const source = $('canvasGraded'), scale = Math.min(1, 1080 / Math.max(source.width, source.height));
+  const w = Math.max(2, Math.round(source.width * scale)), h = Math.max(2, Math.round(source.height * scale));
+  const anime = document.createElement('canvas'); anime.width = w; anime.height = h;
+  anime.getContext('2d').drawImage($('canvasAnimeOverlay'), 0, 0, w, h);
+  const scene = document.createElement('canvas'); scene.width = w; scene.height = h;
+  scene.getContext('2d').drawImage(source, 0, 0, w, h);
+  const frame = document.createElement('canvas'); frame.width = w; frame.height = h;
+  const ctx = frame.getContext('2d');
+  const frames = 12, delayMs = Math.round(2000 / frames);
+  const perFrame = [];
+  for (let index = 0; index < frames; index++) {
+    const realOpacity = index / (frames - 1);
+    ctx.globalAlpha = 1; ctx.drawImage(anime, 0, 0);
+    ctx.globalAlpha = realOpacity; ctx.drawImage(scene, 0, 0); ctx.globalAlpha = 1;
+    const blob = await new Promise((r) => frame.toBlob(r, 'image/png'));
+    if (!blob) throw new Error('PNG 编码失败');
+    perFrame.push(pngChunksOf(await blob.arrayBuffer()));
+    setStatus(`正在生成高清 APNG · ${index + 1}/${frames}`);
+    await nextPaint();
+  }
+  const ihdr = perFrame[0].find((c) => c.type === 'IHDR');
+  const pieces = [Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10), pngChunk('IHDR', ihdr.data)];
+  const acTL = new Uint8Array(8);
+  new DataView(acTL.buffer).setUint32(0, frames);
+  new DataView(acTL.buffer).setUint32(4, 1); // 播放 1 次，结束停在实景
+  pieces.push(pngChunk('acTL', acTL));
+  let seq = 0;
+  perFrame.forEach((chunks, fi) => {
+    const fcTL = new Uint8Array(26);
+    const dv = new DataView(fcTL.buffer);
+    dv.setUint32(0, seq++); dv.setUint32(4, w); dv.setUint32(8, h);
+    dv.setUint16(20, delayMs); dv.setUint16(22, 1000); // delay = delayMs/1000 秒
+    pieces.push(pngChunk('fcTL', fcTL));
+    for (const c of chunks) {
+      if (c.type !== 'IDAT') continue;
+      if (fi === 0) { pieces.push(pngChunk('IDAT', c.data)); continue; }
+      const fdat = new Uint8Array(4 + c.data.length);
+      new DataView(fdat.buffer).setUint32(0, seq++);
+      fdat.set(c.data, 4);
+      pieces.push(pngChunk('fdAT', fdat));
+    }
+  });
+  pieces.push(pngChunk('IEND', new Uint8Array(0)));
+  return { blob: new Blob(pieces, { type: 'image/png' }), width: w, height: h };
+}
+
+$('btnExportApng').addEventListener('click', async () => {
+  const btn = $('btnExportApng'); btn.disabled = true;
+  try {
+    const apng = await makeAnimeToSceneApng();
+    const url = URL.createObjectURL(apng.blob);
+    download(url, 'seichi-anime-to-scene.apng.png');
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    setStatus(`已导出高清 APNG · ${apng.width}×${apng.height} · ${(apng.blob.size / 1048576).toFixed(1)}MB · 全彩，分享兼容性略低于 GIF`);
+  } catch (e) {
+    console.error(e);
+    setStatus('APNG 导出失败：' + (e.message || e));
   } finally { btn.disabled = false; }
 });
 
@@ -1676,6 +1890,7 @@ function renderMatchResults(top) {
 
 $('btnMatchScene').addEventListener('click', () => {
   if (!state.anime) { setStatus('请先上传动画截图'); return; }
+  if (state.aiBusy) { setStatus('AI 任务进行中，请稍候…'); return; }
   $('matchFiles').value = '';
   $('matchFiles').click();
 });
@@ -1683,7 +1898,9 @@ $('btnMatchScene').addEventListener('click', () => {
 $('matchFiles').addEventListener('change', async (event) => {
   const files = [...event.target.files].slice(0, MATCH_MAX_FILES);
   if (!files.length || !state.anime) return;
-  const btn = $('btnMatchScene'); btn.disabled = true;
+  // 找图的嵌入模型跑在主线程 ORT；与抠像 Worker 的 ORT 堆互斥，防止双堆并存挤爆内存
+  if (state.aiBusy) { setStatus('AI 任务进行中，请稍候…'); return; }
+  setAIBusy(true);
   $('matchResults').hidden = true;
   try {
     setStatus('准备找图匹配模型…');
@@ -1717,7 +1934,7 @@ $('matchFiles').addEventListener('change', async (event) => {
   } catch (e) {
     console.error(e); rememberError('scene-match', e);
     setStatus('找图匹配失败：' + (e.message || e));
-  } finally { btn.disabled = !state.anime; }
+  } finally { setAIBusy(false); }
 });
 
 // ---------- 参数自动恢复与风格预设 ----------
@@ -2052,6 +2269,8 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 const lassoState = {
   pts: [], drawing: false, busy: false, mode: 'extract', shape: 'rect',
   keepMode: false, keepDrawing: false, keepStrokes: [], stage: 'select', maskOverlay: null,
+  pickMode: false,   // 第二步「点选补块」：点一下暗蒙版，把整块连通色域并入目标
+  refineBox: null,   // 第一步圈选的 bbox，点选补块只在框内生效
 };
 
 function lassoReady() {
@@ -2064,7 +2283,9 @@ function updateLassoTip() {
   if (lassoState.stage === 'refine') {
     $('lassoTip').textContent = lassoState.keepMode
       ? '蓝色画笔：刷出的部分会立刻并入识别目标'
-      : '识别结果以外的区域已蒙版；如有漏掉的脸、手或发丝，请开启蓝色强制保留画笔';
+      : lassoState.pickMode
+        ? '点选补块：点一下蒙版里的暗块（脸、手、衣角），整块颜色相近的区域会一起并入目标'
+        : '识别结果以外的区域已蒙版；漏掉的脸、手可用「点选补块」整块补回，细碎处用蓝色画笔';
     return;
   }
   if (lassoState.keepMode) {
@@ -2086,12 +2307,14 @@ function updateLassoGuide() {
 }
 
 function rebuildLassoMaskOverlay() {
-  if (!state.rawAlpha || !state.rawW || !state.rawH) { lassoState.maskOverlay = null; return; }
+  // 以最终 alpha（算法+手工修补+阈值收边之后）为准；蓝笔/点选的效果立即反映在蒙版上
+  const src = state.finalAlpha?.length === state.rawW * state.rawH ? state.finalAlpha : state.rawAlpha;
+  if (!src || !state.rawW || !state.rawH) { lassoState.maskOverlay = null; return; }
   const overlay = document.createElement('canvas'); overlay.width = state.rawW; overlay.height = state.rawH;
   const image = new ImageData(overlay.width, overlay.height);
-  for (let i = 0, p = 0; i < state.rawAlpha.length; i++, p += 4) {
+  for (let i = 0, p = 0; i < src.length; i++, p += 4) {
     // 识别目标保持完整；其它部分以深色半透明蒙版呈现，便于明确看出遗漏。
-    image.data[p + 3] = Math.round((255 - state.rawAlpha[i]) * .72);
+    image.data[p + 3] = Math.round((255 - src[i]) * .72);
   }
   overlay.getContext('2d').putImageData(image, 0, 0);
   lassoState.maskOverlay = overlay;
@@ -2101,6 +2324,7 @@ function lassoRedraw() {
   const c = $('lassoCanvas'), ctx = c.getContext('2d');
   ctx.putImageData(state.anime.imgData, 0, 0);
   if (lassoState.stage === 'refine' && lassoState.maskOverlay) ctx.drawImage(lassoState.maskOverlay, 0, 0);
+  if (lassoState.stage === 'refine' && state.opsTint) ctx.drawImage(state.opsTint, 0, 0);
   if (lassoState.stage === 'select' && lassoState.pts.length > 1) {
     ctx.save();
     ctx.lineWidth = Math.max(2, c.width / 350);
@@ -2132,9 +2356,14 @@ function lassoRedraw() {
 function updateKeepBrushUI() {
   const available = lassoState.mode !== 'erase' && lassoState.stage === 'refine';
   $('btnLassoKeep').hidden = !available;
+  $('btnLassoPick').hidden = !available;
+  $('btnLassoUndo').hidden = !available;
+  $('btnLassoUndo').disabled = !state.maskOps.length;
   $('lassoKeepSize').hidden = !available || !lassoState.keepMode;
   $('btnLassoKeep').classList.toggle('keep-on', lassoState.keepMode);
   $('btnLassoKeep').setAttribute('aria-pressed', String(lassoState.keepMode));
+  $('btnLassoPick').classList.toggle('keep-on', lassoState.pickMode);
+  $('btnLassoPick').setAttribute('aria-pressed', String(lassoState.pickMode));
   $('lassoShapes').hidden = lassoState.stage === 'refine';
   $('btnLassoClear').hidden = lassoState.stage === 'refine';
 }
@@ -2157,6 +2386,7 @@ function openLasso(mode = 'extract') {
   c.width = state.anime.width; c.height = state.anime.height;
   lassoState.pts = []; lassoState.drawing = false; lassoState.keepMode = false; lassoState.keepDrawing = false; lassoState.keepStrokes = [];
   lassoState.stage = 'select'; lassoState.maskOverlay = null;
+  lassoState.pickMode = false; lassoState.refineBox = null;
   lassoState.mode = mode;
   updateLassoTip();
   updateLassoGuide();
@@ -2175,40 +2405,60 @@ function extractAlgorithmInRegion(box) {
   crop.width = box.w; crop.height = box.h;
   // 用负坐标直接把原图指定区域拷进小画布，算法只面对用户圈出的局部。
   crop.getContext('2d').putImageData(state.anime.imgData, -box.x, -box.y);
-  const res = extractForeground(crop.getContext('2d').getImageData(0, 0, box.w, box.h), { centerBias: 0.5 });
+  const cropData = crop.getContext('2d').getImageData(0, 0, box.w, box.h);
+  const res = extractForeground(cropData, { centerBias: 0.5 });
+  // 近闭合轮廓补洞：脸/手/服装内部被误判成背景时，只要洞的颜色更像
+  // 周边前景而非外部背景，就整块补回；真镂空（透出背景色）保持不填。
+  if (res.bbox) fillNearlyClosedHoles(res.alpha, box.w, box.h, cropData);
   return {
     box: { ...box, score: 1 }, rect: { ...box }, score: 1,
     alpha: res.alpha, empty: !res.bbox, via: 'algorithm', manual: true,
   };
 }
 
-function applyForcedKeepStrokes(strokes) {
-  if (!strokes.length || !state.rawAlpha || !state.rawW || !state.rawH) return 0;
-  const mask = document.createElement('canvas'); mask.width = state.rawW; mask.height = state.rawH;
-  const ctx = mask.getContext('2d');
-  ctx.strokeStyle = '#fff'; ctx.fillStyle = '#fff'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  for (const stroke of strokes) {
-    if (!stroke.pts.length) continue;
-    ctx.lineWidth = stroke.width;
-    ctx.beginPath(); ctx.moveTo(stroke.pts[0][0], stroke.pts[0][1]);
-    for (let i = 1; i < stroke.pts.length; i++) ctx.lineTo(stroke.pts[i][0], stroke.pts[i][1]);
-    ctx.stroke();
-    if (stroke.pts.length === 1) { ctx.beginPath(); ctx.arc(stroke.pts[0][0], stroke.pts[0][1], stroke.width / 2, 0, Math.PI * 2); ctx.fill(); }
+// 点选补块：以点击处为种子，在「未被识别(finalAlpha 低) ∩ 颜色相近 ∩ 第一步粉框内」
+// 的约束下做 BFS——动画是平涂，这样一次就能圈出整张脸/整只手这样的语义色块。
+function pickRegionAt(x, y) {
+  const w = state.rawW, h = state.rawH;
+  const box = lassoState.refineBox;
+  if (!state.finalAlpha || state.finalAlpha.length !== w * h || !box || !state.anime) return null;
+  const px = Math.round(x), py = Math.round(y);
+  if (px < box.x || py < box.y || px >= box.x + box.w || py >= box.y + box.h) return { reason: 'outside' };
+  const seed = py * w + px;
+  if (state.finalAlpha[seed] > 127) return { reason: 'already' };
+  const d = state.anime.imgData.data;
+  const sr = d[seed * 4], sg = d[seed * 4 + 1], sb = d[seed * 4 + 2];
+  const TOL2 = 42 * 42; // 平涂色块内色差很小；跨线稿/异色块会被挡住
+  const maxArea = Math.round(box.w * box.h * 0.4); // 安全上限：不许一口吃掉小半个圈选框
+  const visited = new Uint8Array(w * h);
+  const stack = [seed]; visited[seed] = 1;
+  const idx = [];
+  while (stack.length) {
+    const i = stack.pop();
+    idx.push(i);
+    if (idx.length > maxArea) return { reason: 'toobig' };
+    const ix = i % w, iy = (i / w) | 0;
+    for (const n of [ix > 0 ? i - 1 : -1, ix < w - 1 ? i + 1 : -1, iy > 0 ? i - w : -1, iy < h - 1 ? i + w : -1]) {
+      if (n < 0 || visited[n]) continue;
+      const nx = n % w, ny = (n / w) | 0;
+      if (nx < box.x || ny < box.y || nx >= box.x + box.w || ny >= box.y + box.h) continue;
+      visited[n] = 1;
+      if (state.finalAlpha[n] > 127) continue; // 已是目标 → 连通域边界
+      const p = n * 4;
+      const dr = d[p] - sr, dg = d[p + 1] - sg, db = d[p + 2] - sb;
+      if (dr * dr + dg * dg + db * db > TOL2) continue; // 颜色魔棒约束
+      stack.push(n);
+    }
   }
-  const pixels = ctx.getImageData(0, 0, mask.width, mask.height).data;
-  let added = 0;
-  if (!state.forcedAlpha || state.forcedAlpha.length !== state.rawAlpha.length) state.forcedAlpha = new Uint8ClampedArray(state.rawAlpha.length);
-  for (let i = 0, p = 3; p < pixels.length; i++, p += 4) {
-    if (pixels[p] && !state.forcedAlpha[i]) { state.forcedAlpha[i] = 255; added++; }
-    if (pixels[p]) state.rawAlpha[i] = 255;
-  }
-  return added;
+  return { idx: Uint32Array.from(idx) };
 }
 
 // 圈选核心：模型模式走 Worker；算法模式只处理圈选区域，避免把整幅画面当作主体猜。
 async function runLassoBox(box, centroid) {
   if (lassoState.busy) return null;
+  if (state.aiBusy) { $('extractStatus').textContent = 'AI 任务进行中，请稍候…'; return null; }
   lassoState.busy = true;
+  setAIBusy(true);
   $('btnLassoRun').disabled = true;
   const onStage = (s) => { $('extractStatus').textContent = s; };
   const onProgress = (recv, total) => {
@@ -2238,11 +2488,16 @@ async function runLassoBox(box, centroid) {
     applyCharSelection(!hadCutout);
     const ok = found.filter((c) => !c.empty).length;
     const method = lassoState.mode === 'algorithm' ? '算法' : '模型';
-    $('extractStatus').textContent = ok === 0
-      ? `圈选区域没有找到明显前景——试着圈大一点、或让圈更贴近角色`
-      : `${method}已识别 ${ok} 个角色 · 现在可用蓝色画笔补回遗漏部分`;
+    if (ok === 0) {
+      // 没识别出任何内容：留在第一步，让用户按提示直接重圈（不收起粉色工具）
+      $('extractStatus').textContent = '圈选区域没有找到明显前景——试着圈大一点、或让圈更贴近角色';
+      lassoRedraw();
+      return found;
+    }
+    $('extractStatus').textContent = `${method}已识别 ${ok} 个角色 · 漏掉的部分可点选补块或蓝笔补画`;
     lassoState.stage = 'refine';
-    lassoState.keepMode = false;
+    lassoState.keepMode = false; lassoState.pickMode = false;
+    lassoState.refineBox = { ...box };
     rebuildLassoMaskOverlay();
     updateLassoGuide(); updateLassoTip(); updateKeepBrushUI();
     $('btnLassoRun').textContent = '完成抠像';
@@ -2255,7 +2510,8 @@ async function runLassoBox(box, centroid) {
     return null;
   } finally {
     lassoState.busy = false;
-    $('btnLassoRun').disabled = !lassoReady();
+    setAIBusy(false);
+    if (lassoState.stage !== 'refine') $('btnLassoRun').disabled = !lassoReady();
   }
 }
 
@@ -2266,8 +2522,17 @@ $('btnLassoClear').addEventListener('click', () => { lassoState.pts = []; lassoS
 $('btnLassoKeep').addEventListener('click', () => {
   if (lassoState.mode === 'erase' || lassoState.stage !== 'refine') return;
   lassoState.keepMode = !lassoState.keepMode;
+  lassoState.pickMode = false;
   updateLassoTip(); updateKeepBrushUI(); lassoRedraw();
 });
+$('btnLassoPick').addEventListener('click', () => {
+  if (lassoState.mode === 'erase' || lassoState.stage !== 'refine') return;
+  lassoState.pickMode = !lassoState.pickMode;
+  lassoState.keepMode = false;
+  updateLassoTip(); updateKeepBrushUI(); lassoRedraw();
+});
+$('btnLassoUndo').addEventListener('click', undoMaskOp);
+$('btnMaskUndo').addEventListener('click', undoMaskOp);
 $('lassoKeepBrush').addEventListener('input', () => lassoRedraw());
 $('btnLassoRun').addEventListener('click', async () => {
   if (lassoState.stage === 'refine') {
@@ -2278,25 +2543,10 @@ $('btnLassoRun').addEventListener('click', async () => {
   const box = lassoBBox();
   if (box.w < 12 || box.h < 12) { $('extractStatus').textContent = '圈得太小了，重新圈一下'; return; }
   if (lassoState.mode === 'erase') {
-    const pts = lassoState.pts;
-    const inside = (x, y) => {
-      let hit = false;
-      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-        const [xi, yi] = pts[i], [xj, yj] = pts[j];
-        if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) hit = !hit;
-      }
-      return hit;
-    };
-    for (let y = box.y; y < box.y + box.h; y++) for (let x = box.x; x < box.x + box.w; x++) {
-      if (inside(x + .5, y + .5)) {
-        const i = y * state.rawW + x;
-        state.rawAlpha[i] = 0;
-        if (state.forcedAlpha) state.forcedAlpha[i] = 0;
-      }
-    }
+    // 擦除也是一个可撤销的操作层；不再改写 rawAlpha，勾选角色重建后擦除依然生效
+    const coverage = pushMaskOp({ type: 'erase', pts: lassoState.pts.map((p) => [p[0], p[1]]) });
     closeLasso();
-    const coverage = applyRefine(false);
-    $('extractStatus').textContent = `已擦除圈选区域 · 当前角色占画面 ${(coverage * 100).toFixed(0)}%`;
+    $('extractStatus').textContent = `已擦除圈选区域 · 当前角色占画面 ${((coverage || 0) * 100).toFixed(0)}% · 可撤销`;
     return;
   }
   let sx = 0, sy = 0;
@@ -2324,17 +2574,34 @@ $('btnLassoRun').addEventListener('click', async () => {
   c.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     try { c.setPointerCapture(e.pointerId); } catch { /* 某些环境/合成事件会抛，不影响绘制 */ }
-    lassoState.drawing = true;
     anchor = toImg(e);
-    if (lassoState.keepMode) {
+    if (lassoState.stage === 'refine') {
+      // 第二步：点选补块单击即生效；蓝笔开始记一笔；两者都没开就忽略，
+      // 绝不能改写第一步的选区 pts（否则「完成抠像」会被误禁用）
+      if (lassoState.pickMode) { runPickAt(anchor); return; }
+      if (!lassoState.keepMode) return;
+      lassoState.drawing = true;
       lassoState.keepDrawing = true;
       lassoState.keepStrokes.push({ pts: [anchor], width: Number($('lassoKeepBrush').value) });
     } else {
+      lassoState.drawing = true;
       lassoState.keepDrawing = false;
       lassoState.pts = lassoState.shape === 'free' ? [anchor] : [];
     }
     lassoRedraw();
   });
+
+  function runPickAt(pt) {
+    const res = pickRegionAt(pt[0], pt[1]);
+    if (!res) return;
+    if (res.reason === 'outside') { $('extractStatus').textContent = '请点在第一步圈出的范围内'; return; }
+    if (res.reason === 'already') { $('extractStatus').textContent = '这一块已经是保留目标了'; return; }
+    if (res.reason === 'toobig') { $('extractStatus').textContent = '这一片太大（超过圈选框四成），换个更小的暗块点，或改用蓝笔'; return; }
+    pushMaskOp({ type: 'keepRegion', idx: res.idx });
+    rebuildLassoMaskOverlay();
+    $('extractStatus').textContent = `已整块补入 ${res.idx.length.toLocaleString()} 个像素 · 可继续点选或撤销`;
+    lassoRedraw();
+  }
   c.addEventListener('pointermove', (e) => {
     if (!lassoState.drawing) return;
     const p = toImg(e);
@@ -2355,13 +2622,13 @@ $('btnLassoRun').addEventListener('click', async () => {
     const lastKeepStroke = lassoState.keepDrawing ? lassoState.keepStrokes[lassoState.keepStrokes.length - 1] : null;
     lassoState.drawing = false; lassoState.keepDrawing = false;
     if (lastKeepStroke && lassoState.stage === 'refine') {
-      const forced = applyForcedKeepStrokes([lastKeepStroke]);
-      if (forced) {
-        applyRefine(false);
-        rebuildLassoMaskOverlay();
-        $('extractStatus').textContent = `已强制保留 ${forced.toLocaleString()} 个像素 · 可继续补画或点“完成抠像”`;
-      }
+      // 落笔即提交成一个可撤销的 keep 操作；提交后的显示交给蓝色 tint 层
+      lassoState.keepStrokes = [];
+      pushMaskOp({ type: 'keep', stroke: lastKeepStroke });
+      rebuildLassoMaskOverlay();
+      $('extractStatus').textContent = '已补上一笔 · 可继续补画、点选或撤销';
       lassoRedraw();
+      return; // refine 阶段「完成抠像」保持可用
     }
     $('btnLassoRun').disabled = !lassoReady() || lassoState.busy;
   };
@@ -2416,7 +2683,7 @@ $('btnShoot').addEventListener('click', async () => {
   }
 });
 
-window.__qa = { state, renderFullRes, enterAlignMode, applyAlignCrop, alignState, recompute, runLassoBox, launchViewfinder };
+window.__qa = { state, renderFullRes, enterAlignMode, applyAlignCrop, alignState, recompute, runLassoBox, launchViewfinder, makeAnimeToSceneGif, makeAnimeToSceneApng, undoMaskOp };
 
 // 隐藏的开发验收入口：http://localhost:8126/?qa-demo=1
 if (new URLSearchParams(location.search).has('qa-demo')) {

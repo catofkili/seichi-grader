@@ -207,6 +207,10 @@
               <button id="btnEraseMask" class="ghost" disabled>橡皮擦</button>
               <button type="button" class="info-tip" aria-label="说明" data-tip="框住误识别的部分，把它从抠图结果里擦掉">i</button>
             </div>
+            <div class="extract-row">
+              <button id="btnMaskUndo" class="ghost" disabled>↩ 撤销修补</button>
+              <button type="button" class="info-tip" aria-label="说明" data-tip="撤销最近一次蓝笔、点选补块或橡皮擦，可连续撤销到最初">i</button>
+            </div>
             <button id="btnExportCharacter" class="ghost" disabled>导出角色透明 PNG</button>
             <label class="check">
               <input type="checkbox" id="hiresDet" />
@@ -256,6 +260,7 @@
             <button id="btnExportCompare" disabled>导出对比图</button>
             <button id="btnExportWipe" disabled>导出滑动对比动图</button>
             <button id="btnExportMorph" disabled>导出动画→实景 GIF</button>
+            <button id="btnExportApng" disabled>导出高清动图 APNG（全彩）</button>
           </div>
         </div>
         <input type="file" id="batchFiles" accept="image/jpeg,image/png,image/webp,.heic,.heif,.cr2,.cr3,.nef,.arw,.dng,.orf,.rw2,.raf,.pef,.srw" multiple hidden />
@@ -343,7 +348,9 @@
         <button data-shape="free" class="small">✎ 画笔</button>
       </div>
       <div class="lasso-keep">
-        <button type="button" id="btnLassoKeep" class="small">🖊 强制保留</button>
+        <button type="button" id="btnLassoPick" class="small" hidden>👆 点选补块</button>
+        <button type="button" id="btnLassoKeep" class="small">🖊 蓝笔补画</button>
+        <button type="button" id="btnLassoUndo" class="small" hidden>↩ 撤销</button>
         <label id="lassoKeepSize" hidden>粗细 <input id="lassoKeepBrush" type="range" min="4" max="160" value="36" /></label>
       </div>
       <div class="lasso-actions">
@@ -365,7 +372,8 @@
         <button class="export-card" data-export-action="image"><canvas id="hubPreviewImage"></canvas><b>调色图</b><span>高分辨率 JPEG</span></button>
         <button class="export-card" data-export-action="compare"><canvas id="hubPreviewCompare"></canvas><b id="hubCompareTitle">对比图</b><span>按当前布局导出 PNG</span></button>
         <button class="export-card" data-export-action="wipe"><canvas id="hubPreviewWipe"></canvas><b>滑动对比动图</b><span>4 秒 WebM / MP4</span></button>
-        <button class="export-card" data-export-action="morph"><canvas id="hubPreviewMorph"></canvas><b>动画 → 实景 GIF</b><span>约 2 秒 GIF</span></button>
+        <button class="export-card" data-export-action="morph"><canvas id="hubPreviewMorph"></canvas><b>动画 → 实景 GIF</b><span>约 2 秒 GIF · 分享兼容</span></button>
+        <button class="export-card export-card-text" data-export-action="apng"><i>HD</i><b>高清动图 APNG</b><span>同内容全彩 · 体积较大</span></button>
         <button class="export-card" id="hubCharacterCard" data-export-action="character" hidden><canvas id="hubPreviewCharacter"></canvas><b>角色透明 PNG</b><span>已抠出的角色</span></button>
         <button class="export-card export-card-text" data-export-action="batch"><i>＋</i><b>批量套用</b><span>多张实景照片导出 JPEG</span></button>
         <button class="export-card export-card-text" data-export-action="lut"><i>LUT</i><b>高精度 LUT</b><span>65³ .cube 文件</span></button>
@@ -373,6 +381,6 @@
     </div>
   </div>
 
-  <script type="module" src="./app.js?v=20260717-exporthub"></script>
+  <script type="module" src="./app.js?v=20260717-maskops"></script>
 </body>
 </html>
