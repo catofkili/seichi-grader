@@ -249,15 +249,18 @@
       <div class="sec">
         <div class="sec-title">导出</div>
         <div class="actions">
-          <button id="btnExportImg" class="primary" disabled>导出调色图</button>
-          <button id="btnShareImg" class="primary" hidden>保存到照片 / 分享</button>
-          <button id="btnExportCompare" disabled>导出对比图</button>
-          <button id="btnExportWipe" disabled>导出滑动对比动图</button>
-          <button id="btnExportMorph" disabled>导出动画→实景 GIF</button>
+          <button id="btnOpenExportHub" class="primary" disabled>选择导出方式</button>
+          <div hidden>
+            <button id="btnExportImg" disabled>导出调色图</button>
+            <button id="btnShareImg" hidden>保存到照片 / 分享</button>
+            <button id="btnExportCompare" disabled>导出对比图</button>
+            <button id="btnExportWipe" disabled>导出滑动对比动图</button>
+            <button id="btnExportMorph" disabled>导出动画→实景 GIF</button>
+          </div>
         </div>
         <input type="file" id="batchFiles" accept="image/jpeg,image/png,image/webp,.heic,.heif,.cr2,.cr3,.nef,.arw,.dng,.orf,.rw2,.raf,.pef,.srw" multiple hidden />
-        <button id="btnBatchExport" disabled>批量套用当前风格并导出</button>
-        <div class="export-note">选择多张实景照片，依次按当前动画截图与调色参数导出 JPEG；浏览器可能会询问是否允许多个下载。</div>
+        <button id="btnBatchExport" disabled hidden>批量套用当前风格并导出</button>
+        <div class="export-note">在导出面板中预览并选择需要的格式；缩略图即时生成，实际文件按选择后才开始制作。</div>
         <details class="adv">
           <summary>更多导出与预设 · 布局 / LUT / 预设</summary>
           <div class="d-body">
@@ -269,14 +272,14 @@
                 <option value="triple">三联（动画 · 原图 · 调色）</option>
                 <option value="postcard">巡礼卡片（此处 · 彼处）</option>
               </select>
-              <button id="btnExportCompareLayout" class="primary" disabled>按此布局导出对比图</button>
+              <button id="btnExportCompareLayout" class="primary" disabled hidden>按此布局导出对比图</button>
             </div>
             <div class="ctrl-group compare-meta">
               <label>卡片标题与地点（可选）</label>
               <input id="compareTitle" maxlength="48" placeholder="例如：摇曳露营△ · 伊豆" />
               <input id="comparePlace" maxlength="80" placeholder="地点；照片含 GPS 时会自动附上坐标" />
             </div>
-            <button id="btnExportLut" disabled>导出高精度 .cube LUT</button>
+            <button id="btnExportLut" disabled hidden>导出高精度 .cube LUT</button>
             <div class="export-note">65³ LUT 含影调/色彩/饱和度；不含天空分区与辉光。</div>
             <div class="ctrl-group preset-box">
               <label>风格预设（保存在本机）</label>
@@ -351,6 +354,24 @@
     <div class="lasso-stage"><canvas id="lassoCanvas"></canvas></div>
   </div>
 
-  <script type="module" src="./app.js?v=20260717-layoutexport"></script>
+  <div id="exportHubModal" class="export-hub" hidden role="dialog" aria-modal="true" aria-labelledby="exportHubTitle">
+    <div class="export-hub-dialog">
+      <div class="export-hub-head">
+        <div><h2 id="exportHubTitle">选择导出方式</h2><p>这是快速缩略预览；选中后才生成完整文件。</p></div>
+        <button id="btnCloseExportHub" class="small" aria-label="关闭导出面板">关闭</button>
+      </div>
+      <div class="export-hub-grid">
+        <button class="export-card" data-export-action="image"><canvas id="hubPreviewImage"></canvas><b>调色图</b><span>高分辨率 JPEG</span></button>
+        <button class="export-card" data-export-action="compare"><canvas id="hubPreviewCompare"></canvas><b id="hubCompareTitle">对比图</b><span>按当前布局导出 PNG</span></button>
+        <button class="export-card" data-export-action="wipe"><canvas id="hubPreviewWipe"></canvas><b>滑动对比动图</b><span>4 秒 WebM / MP4</span></button>
+        <button class="export-card" data-export-action="morph"><canvas id="hubPreviewMorph"></canvas><b>动画 → 实景 GIF</b><span>约 2 秒 GIF</span></button>
+        <button class="export-card" id="hubCharacterCard" data-export-action="character" hidden><canvas id="hubPreviewCharacter"></canvas><b>角色透明 PNG</b><span>已抠出的角色</span></button>
+        <button class="export-card export-card-text" data-export-action="batch"><i>＋</i><b>批量套用</b><span>多张实景照片导出 JPEG</span></button>
+        <button class="export-card export-card-text" data-export-action="lut"><i>LUT</i><b>高精度 LUT</b><span>65³ .cube 文件</span></button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./app.js?v=20260717-exporthub"></script>
 </body>
 </html>

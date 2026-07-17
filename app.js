@@ -317,7 +317,7 @@ function recompute() {
   redrawComparisonReference();
   syncCanvasSize();
   $('compareModes').hidden = false;
-  ['btnExportImg', 'btnExportCompare', 'btnExportCompareLayout', 'btnExportWipe', 'btnExportMorph', 'btnExportLut', 'btnBatchExport'].forEach(id => $(id).disabled = false);
+  ['btnOpenExportHub', 'btnExportImg', 'btnExportCompare', 'btnExportCompareLayout', 'btnExportWipe', 'btnExportMorph', 'btnExportLut', 'btnBatchExport'].forEach(id => $(id).disabled = false);
   updateWorkflow();
   const modeText = mode === 'tone' ? '影调+色彩' : mode === 'full' ? '完整' : '仅色彩';
   setStatus(`已调色 · ${modeText} · 强度 ${$('strength').value}% · 天空分区：${useRegion ? '已启用' : `未启用（${skyReason}）`}`);
@@ -1247,7 +1247,7 @@ $('btnExportLut').addEventListener('click', () => {
   }, 30);
 });
 
-function exportCompareLayout() {
+function makeCompareCanvas(maxWidth = 0) {
   const layout = $('layout').value;
   const anime = state.anime, gw = state.gradedData.width, gh = state.gradedData.height;
   // 临时画布把各图绘制出来
@@ -1265,7 +1265,7 @@ function exportCompareLayout() {
   const out = document.createElement('canvas');
   const ctx = out.getContext('2d');
   // 以调色图宽度为基准统一缩放
-  const W = gw;
+  const W = maxWidth ? Math.min(gw, maxWidth) : gw;
   const fit = (cv) => ({ cv, h: Math.round(cv.height * (W / cv.width)) });
 
   let panels;
@@ -1310,11 +1310,67 @@ function exportCompareLayout() {
     let y = 0;
     panels.forEach((p) => { ctx.drawImage(p.cv, 0, y, W, p.h); y += p.h + gap; });
   }
+  return out;
+}
+
+function exportCompareLayout() {
+  const out = makeCompareCanvas();
   download(out.toDataURL('image/png'), 'seichi-compare.png');
 }
 
 $('btnExportCompare').addEventListener('click', exportCompareLayout);
 $('btnExportCompareLayout').addEventListener('click', exportCompareLayout);
+
+function drawExportHubPreview(canvasId, source) {
+  const canvas = $(canvasId), maxW = 340, maxH = 190;
+  const sw = source.width, sh = source.height;
+  const scale = Math.min(maxW / sw, maxH / sh);
+  canvas.width = Math.max(2, Math.round(sw * scale));
+  canvas.height = Math.max(2, Math.round(sh * scale));
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+}
+
+function renderExportHubPreviews() {
+  if (!state.gradedData || !state.anime) return;
+  drawExportHubPreview('hubPreviewImage', $('canvasGraded'));
+  drawExportHubPreview('hubPreviewCompare', makeCompareCanvas(340));
+  const wipe = makeWipeFrameCanvas(340);
+  drawWipeFrame(wipe.frame.getContext('2d'), wipe.original, wipe.graded, wipe.w, wipe.h, .5);
+  drawExportHubPreview('hubPreviewWipe', wipe.frame);
+  const morph = document.createElement('canvas');
+  morph.width = $('canvasGraded').width; morph.height = $('canvasGraded').height;
+  const morphCtx = morph.getContext('2d');
+  morphCtx.drawImage($('canvasGraded'), 0, 0);
+  morphCtx.globalAlpha = .5; morphCtx.drawImage($('canvasAnimeOverlay'), 0, 0); morphCtx.globalAlpha = 1;
+  drawExportHubPreview('hubPreviewMorph', morph);
+  const characterCard = $('hubCharacterCard');
+  characterCard.hidden = !state.cutout;
+  if (state.cutout) drawExportHubPreview('hubPreviewCharacter', state.cutout);
+  $('hubCompareTitle').textContent = `对比图 · ${$('layout').selectedOptions[0].textContent}`;
+}
+
+function openExportHub() {
+  renderExportHubPreviews();
+  $('exportHubModal').hidden = false;
+}
+
+function closeExportHub() { $('exportHubModal').hidden = true; }
+
+$('btnOpenExportHub').addEventListener('click', openExportHub);
+$('btnCloseExportHub').addEventListener('click', closeExportHub);
+$('exportHubModal').addEventListener('click', (e) => { if (e.target === $('exportHubModal')) closeExportHub(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('exportHubModal').hidden) closeExportHub(); });
+document.querySelectorAll('[data-export-action]').forEach((card) => {
+  card.addEventListener('click', () => {
+    const buttons = { image: 'btnExportImg', compare: 'btnExportCompare', wipe: 'btnExportWipe', morph: 'btnExportMorph', character: 'btnExportCharacter', batch: 'btnBatchExport', lut: 'btnExportLut' };
+    const target = $(buttons[card.dataset.exportAction]);
+    if (!target || target.disabled) return;
+    closeExportHub();
+    setTimeout(() => target.click(), 0);
+  });
+});
 
 $('btnExportCharacter').addEventListener('click', async () => {
   if (!state.cutout) { setStatus('请先抠出角色'); return; }
