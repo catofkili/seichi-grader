@@ -238,11 +238,46 @@ button.ghost.ai {
 .char-bar-val { font-size: 13px; color: var(--accent-2); min-width: 44px; text-align: right; }
 .char-bar button { white-space: nowrap; }
 .char-bar .lock-on { border-color: var(--accent); color: var(--accent); }
+.compare-stack { position: absolute; inset: 0; display: grid; place-items: center; }
+.stack-panel { position: absolute; inset: 0; display: grid; place-items: center; }
+.stack-label { display: none; }
+#canvasAnimeOverlay { pointer-events: none; }
 .compare canvas { position: absolute; max-width: 100%; max-height: 100%; }
 .compare-clip {
   position: absolute; inset: 0; overflow: hidden;
   display: grid; place-items: center;
   clip-path: inset(0 50% 0 0);
+}
+.compare-stack-mode .compare-stack {
+  position: relative; inset: auto; width: 100%; height: 100%; padding: 8px;
+  display: flex; flex-direction: column; gap: 8px; overflow: auto;
+}
+.compare-stack-mode .stack-panel {
+  position: relative; inset: auto; flex: 1 1 0; min-height: 0; width: 100%;
+  background: rgba(0, 0, 0, .16); border: 1px solid var(--line); border-radius: 8px;
+}
+.compare-stack-mode #stackAnimePanel { order: -1; }
+.compare-stack-mode .stack-panel canvas {
+  position: static; width: auto !important; height: auto !important;
+  max-width: 100%; max-height: 100%;
+}
+.compare-stack-mode .stack-label {
+  display: block; position: absolute; top: 7px; left: 8px; z-index: 1;
+  padding: 2px 7px; border-radius: 12px; background: rgba(0, 0, 0, .58); color: #fff; font-size: 10px;
+}
+.compare-modes {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 8px 12px; border-top: 1px solid var(--line); background: var(--panel-2);
+  color: var(--muted); font-size: 11.5px;
+}
+.compare-mode { min-height: 28px; padding: 4px 9px; border-radius: 14px; font-size: 11.5px; }
+.compare-mode.on { border-color: var(--accent-2); color: #fff; background: rgba(110, 168, 255, .2); }
+.overlay-opacity { display: flex; align-items: center; gap: 5px; margin-left: auto; white-space: nowrap; }
+.overlay-opacity span { color: var(--accent-2); }
+.overlay-opacity input { width: 92px; }
+@media (max-width: 600px) {
+  .overlay-opacity { width: 100%; margin-left: 0; }
+  .overlay-opacity input { flex: 1; width: auto; }
 }
 .handle {
   position: absolute; top: 0; bottom: 0; left: 50%;

@@ -99,14 +99,24 @@
         <button id="btnAlignCancel" class="small">取消</button>
       </div>
       <div class="compare" id="compare">
-        <canvas id="canvasGraded"></canvas>
+        <div class="compare-stack" id="compareStack">
+          <div class="stack-panel" id="stackGradedPanel">
+            <span class="stack-label">调色后</span>
+            <canvas id="canvasGraded"></canvas>
+          </div>
+          <div class="stack-panel" id="stackAnimePanel" hidden>
+            <span class="stack-label">动画截图</span>
+            <canvas id="canvasAnimeStack"></canvas>
+          </div>
+          <canvas id="canvasAnimeOverlay" hidden></canvas>
+        </div>
         <div class="compare-clip" id="clip">
           <canvas id="canvasOrig"></canvas>
         </div>
         <div class="handle" id="handle"><span></span></div>
         <img id="alignGhost" alt="" hidden />
-        <div class="badge left">原图</div>
-        <div class="badge right">调色后</div>
+        <div class="badge left" id="badgeLeft">原图</div>
+        <div class="badge right" id="badgeRight">调色后</div>
         <div class="empty" id="emptyHint">
           <div class="empty-flow">
             <b>把动画的色调套到你的实景照片上</b>
@@ -115,6 +125,13 @@
             <span>③ 导出对比图 · 可选把动画角色抠进画面</span>
           </div>
         </div>
+      </div>
+      <div class="compare-modes" id="compareModes" hidden>
+        <span>对比方式</span>
+        <button type="button" class="compare-mode on" data-compare-mode="slider">滑动</button>
+        <button type="button" class="compare-mode" data-compare-mode="overlay">叠加</button>
+        <button type="button" class="compare-mode" data-compare-mode="stack">上下</button>
+        <label class="overlay-opacity" id="overlayControls" hidden>动画透明度 <span id="overlayOpacityVal">50%</span><input type="range" id="overlayOpacity" min="0" max="100" value="50" /></label>
       </div>
       <div class="char-bar" id="charBar" hidden>
         <span class="char-bar-label">角色大小</span>

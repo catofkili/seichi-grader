@@ -313,7 +313,9 @@ function recompute() {
   drawToCanvas($('canvasOrig'), state.photo.imgData);
   $('emptyHint').hidden = true;
   redrawComposite();          // 画 gradedData + 角色
+  redrawComparisonReference();
   syncCanvasSize();
+  $('compareModes').hidden = false;
   ['btnExportImg', 'btnExportCompare', 'btnExportWipe', 'btnExportLut', 'btnBatchExport'].forEach(id => $(id).disabled = false);
   updateWorkflow();
   const modeText = mode === 'tone' ? '影调+色彩' : mode === 'full' ? '完整' : '仅色彩';
@@ -370,13 +372,59 @@ function syncCanvasSize() {
   const iw = $('canvasGraded').width || state.photo.width, ih = $('canvasGraded').height || state.photo.height;
   const scale = Math.min(cw / iw, ch / ih);
   const w = iw * scale, h = ih * scale;
-  for (const c of [$('canvasGraded'), $('canvasOrig')]) {
+  for (const c of [$('canvasGraded'), $('canvasOrig'), $('canvasAnimeOverlay')]) {
     c.style.width = w + 'px';
     c.style.height = h + 'px';
   }
   const ghost = $('alignGhost');
   if (ghost && !ghost.hidden) { ghost.style.width = w + 'px'; ghost.style.height = h + 'px'; }
 }
+
+// 动画截图用于两种“此处 / 彼处”对比：上下模式保持完整比例；叠加模式则居中 cover，
+// 在已构图对齐时会与实景画框完全重合。
+function redrawComparisonReference() {
+  if (!state.anime || !$('canvasGraded').width) return;
+  const stack = $('canvasAnimeStack');
+  drawToCanvas(stack, state.anime.imgData);
+  const overlay = $('canvasAnimeOverlay');
+  const target = $('canvasGraded');
+  overlay.width = target.width; overlay.height = target.height;
+  const ctx = overlay.getContext('2d');
+  const scale = Math.max(overlay.width / stack.width, overlay.height / stack.height);
+  const w = stack.width * scale, h = stack.height * scale;
+  ctx.drawImage(stack, (overlay.width - w) / 2, (overlay.height - h) / 2, w, h);
+  updateOverlayOpacity();
+}
+
+let comparisonMode = 'slider';
+function updateOverlayOpacity() {
+  const value = $('overlayOpacity').value;
+  $('overlayOpacityVal').textContent = value + '%';
+  $('canvasAnimeOverlay').style.opacity = String(Number(value) / 100);
+}
+
+function setComparisonMode(mode) {
+  comparisonMode = mode;
+  const compare = $('compare');
+  const isSlider = mode === 'slider', isOverlay = mode === 'overlay', isStack = mode === 'stack';
+  compare.classList.toggle('compare-stack-mode', isStack);
+  $('clip').hidden = !isSlider;
+  $('handle').hidden = !isSlider;
+  $('canvasAnimeOverlay').hidden = !isOverlay;
+  $('stackAnimePanel').hidden = !isStack;
+  $('badgeLeft').hidden = isStack;
+  $('badgeRight').hidden = isStack;
+  $('badgeLeft').textContent = isOverlay ? '动画截图' : '原图';
+  $('badgeRight').textContent = '调色后';
+  $('overlayControls').hidden = !isOverlay;
+  document.querySelectorAll('[data-compare-mode]').forEach((button) => button.classList.toggle('on', button.dataset.compareMode === mode));
+  if (state.photo) syncCanvasSize();
+}
+
+document.querySelectorAll('[data-compare-mode]').forEach((button) => {
+  button.addEventListener('click', () => setComparisonMode(button.dataset.compareMode));
+});
+$('overlayOpacity').addEventListener('input', () => { updateOverlayOpacity(); queueSettingsSave(); });
 
 // 光照融合：把实景场景的色调轻轻染到角色上，让它融入场景（带缓存）。
 function invalidateHarmonize() { state.harmonizedCache = null; }
@@ -832,6 +880,7 @@ async function enterAlignMode() {
   alignState.active = true;
   $('compare').classList.add('align-on');
   $('alignBar').hidden = false;
+  $('compareModes').hidden = true;
   $('btnAlign').textContent = '退出对齐';
   const ghost = $('alignGhost');
   ghost.src = $('thumbAnime').src;
@@ -846,6 +895,7 @@ function exitAlignMode(redraw = true) {
   alignState.bitmap = null;
   $('compare').classList.remove('align-on');
   $('alignBar').hidden = true;
+  if (state.gradedData) $('compareModes').hidden = false;
   $('alignGhost').hidden = true;
   $('btnAlign').textContent = '构图对齐';
   if (redraw && state.gradedData) { redrawComposite(); drawToCanvas($('canvasOrig'), state.photo.imgData); syncCanvasSize(); }
@@ -970,7 +1020,7 @@ $('alignOpacity').addEventListener('input', (e) => {
       grabDX = p.x - (state.charPos.cx * gradedCanvas.width);
       grabDY = p.y - (state.charPos.cy * gradedCanvas.height);
       compare.classList.add('grabbing');
-    } else {
+    } else if (comparisonMode === 'slider') {
       moveSlider(e.clientX); sliderDrag = true;
     }
   });
@@ -1512,7 +1562,7 @@ const PRESETS_KEY = 'seichi-style-presets-v1';
 const SETTING_IDS = [
   'mode', 'skyRegion', 'ignoreSub', 'strength', 'satBoost', 'bloom', 'composite',
   'hiresDet', 'mobileSam', 'maskThr', 'maskErode', 'charScale', 'harmonize', 'shadow',
-  'shadowOffset', 'grain', 'layout', 'compareTitle', 'comparePlace',
+  'shadowOffset', 'grain', 'layout', 'compareTitle', 'comparePlace', 'overlayOpacity',
 ];
 
 function captureSettings() {
@@ -1530,7 +1580,7 @@ function syncControlLabels() {
     strength: ['strengthVal', '%'], satBoost: ['satBoostVal', '%'], bloom: ['bloomVal', '%'],
     maskThr: ['maskThrVal', ''], maskErode: ['maskErodeVal', 'px'], charScale: ['charScaleVal', '%'],
     harmonize: ['harmonizeVal', '%'], shadow: ['shadowVal', '%'],
-    shadowOffset: ['shadowOffsetVal', '%'], grain: ['grainVal', '%'],
+    shadowOffset: ['shadowOffsetVal', '%'], grain: ['grainVal', '%'], overlayOpacity: ['overlayOpacityVal', '%'],
   };
   for (const [id, [label, suffix]] of Object.entries(pairs)) $(label).textContent = $(id).value + suffix;
 }
@@ -1549,6 +1599,7 @@ function applySettings(saved, rerender = true) {
     state.charPos = { cx: saved.charPos.cx, cy: saved.charPos.cy };
   }
   syncControlLabels();
+  updateOverlayOpacity();
   invalidateHarmonize(); state.gradeCache = null;
   if (rerender) recompute();
   return true;
