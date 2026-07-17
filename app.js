@@ -2306,7 +2306,7 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 // 三种形状统一落成 pts 多边形（圆用 48 边形逼近），包围盒/质心/擦除逻辑全复用。
 const lassoState = {
   pts: [], drawing: false, busy: false, mode: 'extract', shape: 'rect',
-  keepMode: false, keepDrawing: false, keepStrokes: [], stage: 'select', maskOverlay: null,
+  keepMode: false, keepDrawing: false, keepStrokes: [], eraseDrawing: false, eraseStroke: null, stage: 'select', maskOverlay: null,
   pickMode: false,   // 第二步「点选补块」：点一下暗蒙版，把整块连通色域并入目标
   refineBox: null,   // 第一步圈选的 bbox，点选补块只在框内生效
 };
@@ -2319,7 +2319,7 @@ function lassoReady() {
 
 function updateLassoTip() {
   if (lassoState.mode === 'erase') {
-    $('lassoTip').textContent = '亮着的是已识别目标；在亮着的部分圈选，圈到的部分会变暗并从角色中擦除';
+    $('lassoTip').textContent = '亮着的是已识别目标；调好橡皮大小后，按住拖过亮起部分即可擦除并加回暗蒙版';
     return;
   }
   if (lassoState.stage === 'refine') {
@@ -2344,6 +2344,7 @@ function updateLassoTip() {
 
 function updateLassoGuide() {
   const guide = $('lassoGuide');
+  guide.hidden = lassoState.mode === 'erase';
   guide.children[0].classList.toggle('active', lassoState.stage === 'select');
   guide.children[1].classList.toggle('active', lassoState.stage === 'refine');
 }
@@ -2394,23 +2395,38 @@ function lassoRedraw() {
     }
     ctx.restore();
   }
+  if (lassoState.eraseStroke) {
+    const stroke = lassoState.eraseStroke;
+    ctx.save();
+    // 拖动时预览将要加回的暗蒙版；松手后才作为一整笔可撤销操作提交。
+    ctx.strokeStyle = 'rgba(0,0,0,.68)'; ctx.fillStyle = 'rgba(0,0,0,.68)';
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = stroke.width;
+    ctx.beginPath(); ctx.moveTo(stroke.pts[0][0], stroke.pts[0][1]);
+    for (let i = 1; i < stroke.pts.length; i++) ctx.lineTo(stroke.pts[i][0], stroke.pts[i][1]);
+    ctx.stroke();
+    if (stroke.pts.length === 1) { ctx.beginPath(); ctx.arc(stroke.pts[0][0], stroke.pts[0][1], stroke.width / 2, 0, Math.PI * 2); ctx.fill(); }
+    ctx.restore();
+  }
 }
 
 function updateKeepBrushUI() {
   const available = lassoState.mode !== 'erase' && lassoState.stage === 'refine';
-  const canUndoHere = available || lassoState.mode === 'erase';
+  const erasing = lassoState.mode === 'erase';
+  const canUndoHere = available || erasing;
   $('btnLassoKeep').hidden = !available;
   $('btnLassoPick').hidden = !available;
   // 橡皮擦同样是可逆编辑：撤销必须留在当前弹窗内，而不是让用户回控制面板找。
   $('btnLassoUndo').hidden = !canUndoHere;
   $('btnLassoUndo').disabled = !state.maskOps.length;
-  $('lassoKeepSize').hidden = !available || !lassoState.keepMode;
+  $('lassoKeepSize').hidden = erasing ? false : !available || !lassoState.keepMode;
+  $('lassoBrushSizeLabel').textContent = erasing ? '橡皮大小' : '画笔粗细';
   $('btnLassoKeep').classList.toggle('keep-on', lassoState.keepMode);
   $('btnLassoKeep').setAttribute('aria-pressed', String(lassoState.keepMode));
   $('btnLassoPick').classList.toggle('keep-on', lassoState.pickMode);
   $('btnLassoPick').setAttribute('aria-pressed', String(lassoState.pickMode));
-  $('lassoShapes').hidden = lassoState.stage === 'refine';
-  $('btnLassoClear').hidden = lassoState.stage === 'refine';
+  $('lassoShapes').hidden = lassoState.stage === 'refine' || erasing;
+  $('btnLassoRun').hidden = erasing;
+  $('btnLassoClear').hidden = lassoState.stage === 'refine' || erasing;
 }
 
 function lassoBBox() {
@@ -2430,6 +2446,7 @@ function openLasso(mode = 'extract') {
   const c = $('lassoCanvas');
   c.width = state.anime.width; c.height = state.anime.height;
   lassoState.pts = []; lassoState.drawing = false; lassoState.keepMode = false; lassoState.keepDrawing = false; lassoState.keepStrokes = [];
+  lassoState.eraseDrawing = false; lassoState.eraseStroke = null;
   lassoState.stage = 'select'; lassoState.maskOverlay = null;
   lassoState.pickMode = false; lassoState.refineBox = null;
   lassoState.mode = mode;
@@ -2438,25 +2455,26 @@ function openLasso(mode = 'extract') {
   updateLassoTip();
   updateLassoGuide();
   updateKeepBrushUI();
-  $('btnLassoRun').textContent = mode === 'erase' ? '擦除圈选区域'
-    : mode === 'algorithm' ? '算法抠取圈选区域' : '模型抠取圈选区域';
-  $('btnLassoClear').textContent = mode === 'erase' ? '重画本次擦除' : '重画';
+  $('btnLassoRun').textContent = mode === 'algorithm' ? '算法抠取圈选区域' : '模型抠取圈选区域';
+  $('btnLassoClear').textContent = '重画';
   $('btnLassoRun').disabled = true;
   lassoRedraw();
   $('lassoModal').hidden = false;
 }
 
-// 将圈选多边形裁成“当前已经属于目标”的像素集合。这样橡皮擦只会让亮起的
-// 目标部分回到暗蒙版，框到一片本来就暗的背景不会产生任何效果。
-function selectedIndicesInPolygon(pts) {
+// 将一笔橡皮刷出的轨迹裁成“当前已经属于目标”的像素集合。这样橡皮擦只会让
+// 亮起的目标部分回到暗蒙版，划过本来就暗的背景不会产生任何效果。
+function selectedIndicesInStroke(stroke) {
   const w = state.rawW, h = state.rawH;
   const alpha = state.finalAlpha;
-  if (!w || !h || !alpha || alpha.length !== w * h || pts.length < 3) return [];
+  if (!w || !h || !alpha || alpha.length !== w * h || !stroke?.pts?.length) return [];
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const ctx = c.getContext('2d', { willReadFrequently: true });
-  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
-  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
-  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#fff'; ctx.fillStyle = '#fff'; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = stroke.width;
+  ctx.beginPath(); ctx.moveTo(stroke.pts[0][0], stroke.pts[0][1]);
+  for (let i = 1; i < stroke.pts.length; i++) ctx.lineTo(stroke.pts[i][0], stroke.pts[i][1]);
+  ctx.stroke();
+  if (stroke.pts.length === 1) { ctx.beginPath(); ctx.arc(stroke.pts[0][0], stroke.pts[0][1], stroke.width / 2, 0, Math.PI * 2); ctx.fill(); }
   const painted = ctx.getImageData(0, 0, w, h).data;
   const idx = [];
   for (let i = 0, p = 3; i < alpha.length; i++, p += 4) {
@@ -2616,19 +2634,6 @@ $('btnLassoRun').addEventListener('click', async () => {
   }
   const box = lassoBBox();
   if (box.w < 12 || box.h < 12) { $('extractStatus').textContent = '圈得太小了，重新圈一下'; return; }
-  if (lassoState.mode === 'erase') {
-    const idx = selectedIndicesInPolygon(lassoState.pts);
-    if (!idx.length) {
-      $('extractStatus').textContent = '圈内没有已识别目标；只有亮起的部分可以擦除';
-      return;
-    }
-    // 擦除也是一个可撤销的操作层；只记录当前亮起的目标像素，不改写 rawAlpha。
-    const coverage = pushMaskOp({ type: 'erase', idx });
-    rebuildLassoMaskOverlay();
-    lassoRedraw();
-    $('extractStatus').textContent = `已从已识别目标中擦除 ${idx.length.toLocaleString()} 个像素 · 当前角色占画面 ${((coverage || 0) * 100).toFixed(0)}% · 可点“撤销上一步”恢复`;
-    return;
-  }
   let sx = 0, sy = 0;
   for (const [x, y] of lassoState.pts) { sx += x; sy += y; }
   const centroid = [sx / lassoState.pts.length, sy / lassoState.pts.length];
@@ -2655,6 +2660,14 @@ $('btnLassoRun').addEventListener('click', async () => {
     e.preventDefault();
     try { c.setPointerCapture(e.pointerId); } catch { /* 某些环境/合成事件会抛，不影响绘制 */ }
     anchor = toImg(e);
+    if (lassoState.mode === 'erase') {
+      // 真正的橡皮：按住即开始一笔，拖过亮起部分即可擦除。
+      lassoState.drawing = true;
+      lassoState.eraseDrawing = true;
+      lassoState.eraseStroke = { pts: [anchor], width: Number($('lassoKeepBrush').value) };
+      lassoRedraw();
+      return;
+    }
     if (lassoState.stage === 'refine') {
       // 第二步：点选补块单击即生效；补画开始记一笔；两者都没开就忽略，
       // 绝不能改写第一步的选区 pts（否则「完成抠像」会被误禁用）
@@ -2685,7 +2698,11 @@ $('btnLassoRun').addEventListener('click', async () => {
   c.addEventListener('pointermove', (e) => {
     if (!lassoState.drawing) return;
     const p = toImg(e);
-    if (lassoState.keepDrawing) {
+    if (lassoState.eraseDrawing) {
+      const stroke = lassoState.eraseStroke;
+      const last = stroke.pts[stroke.pts.length - 1];
+      if (Math.hypot(p[0] - last[0], p[1] - last[1]) > 1) { stroke.pts.push(p); lassoRedraw(); }
+    } else if (lassoState.keepDrawing) {
       const stroke = lassoState.keepStrokes[lassoState.keepStrokes.length - 1];
       const last = stroke.pts[stroke.pts.length - 1];
       if (Math.hypot(p[0] - last[0], p[1] - last[1]) > 1) { stroke.pts.push(p); lassoRedraw(); }
@@ -2699,8 +2716,24 @@ $('btnLassoRun').addEventListener('click', async () => {
   });
   const end = () => {
     if (!lassoState.drawing) return;
+    const lastEraseStroke = lassoState.eraseDrawing ? lassoState.eraseStroke : null;
     const lastKeepStroke = lassoState.keepDrawing ? lassoState.keepStrokes[lassoState.keepStrokes.length - 1] : null;
-    lassoState.drawing = false; lassoState.keepDrawing = false;
+    lassoState.drawing = false; lassoState.keepDrawing = false; lassoState.eraseDrawing = false;
+    if (lastEraseStroke) {
+      lassoState.eraseStroke = null;
+      const idx = selectedIndicesInStroke(lastEraseStroke);
+      if (!idx.length) {
+        $('extractStatus').textContent = '橡皮只会擦亮起的目标部分；这一笔没有碰到目标';
+        lassoRedraw();
+        return;
+      }
+      // 一整笔是一个可撤销操作；之后用补画刷回即可覆盖这一笔擦除。
+      const coverage = pushMaskOp({ type: 'erase', idx });
+      rebuildLassoMaskOverlay();
+      $('extractStatus').textContent = `已擦除 ${idx.length.toLocaleString()} 个目标像素 · 当前角色占画面 ${((coverage || 0) * 100).toFixed(0)}% · 可撤销`;
+      lassoRedraw();
+      return;
+    }
     if (lastKeepStroke && lassoState.stage === 'refine') {
       // 落笔即提交成一个可撤销的 keep 操作；提交后最终 alpha 变为不透明，暗蒙版随即消失。
       lassoState.keepStrokes = [];

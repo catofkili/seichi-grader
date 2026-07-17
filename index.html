@@ -351,7 +351,7 @@
         <button type="button" id="btnLassoPick" class="small" hidden>👆 点选补块</button>
         <button type="button" id="btnLassoKeep" class="small">🖊 补画（刷开蒙版）</button>
         <button type="button" id="btnLassoUndo" class="small" hidden>↩ 撤销上一步</button>
-        <label id="lassoKeepSize" hidden>粗细 <input id="lassoKeepBrush" type="range" min="4" max="160" value="36" /></label>
+        <label id="lassoKeepSize" hidden><span id="lassoBrushSizeLabel">画笔粗细</span> <input id="lassoKeepBrush" type="range" min="4" max="160" value="36" /></label>
       </div>
       <div class="lasso-actions">
         <button id="btnLassoRun" class="primary small" disabled>抠取圈选区域</button>
@@ -386,6 +386,6 @@
     </div>
   </div>
 
-  <script type="module" src="./app.js?v=20260717-mask-undo"></script>
+  <script type="module" src="./app.js?v=20260717-eraser-brush"></script>
 </body>
 </html>
