@@ -317,7 +317,7 @@ function recompute() {
   redrawComparisonReference();
   syncCanvasSize();
   $('compareModes').hidden = false;
-  ['btnExportImg', 'btnExportCompare', 'btnExportWipe', 'btnExportMorph', 'btnExportLut', 'btnBatchExport'].forEach(id => $(id).disabled = false);
+  ['btnExportImg', 'btnExportCompare', 'btnExportCompareLayout', 'btnExportWipe', 'btnExportMorph', 'btnExportLut', 'btnBatchExport'].forEach(id => $(id).disabled = false);
   updateWorkflow();
   const modeText = mode === 'tone' ? '影调+色彩' : mode === 'full' ? '完整' : '仅色彩';
   setStatus(`已调色 · ${modeText} · 强度 ${$('strength').value}% · 天空分区：${useRegion ? '已启用' : `未启用（${skyReason}）`}`);
@@ -1247,7 +1247,7 @@ $('btnExportLut').addEventListener('click', () => {
   }, 30);
 });
 
-$('btnExportCompare').addEventListener('click', () => {
+function exportCompareLayout() {
   const layout = $('layout').value;
   const anime = state.anime, gw = state.gradedData.width, gh = state.gradedData.height;
   // 临时画布把各图绘制出来
@@ -1311,7 +1311,10 @@ $('btnExportCompare').addEventListener('click', () => {
     panels.forEach((p) => { ctx.drawImage(p.cv, 0, y, W, p.h); y += p.h + gap; });
   }
   download(out.toDataURL('image/png'), 'seichi-compare.png');
-});
+}
+
+$('btnExportCompare').addEventListener('click', exportCompareLayout);
+$('btnExportCompareLayout').addEventListener('click', exportCompareLayout);
 
 $('btnExportCharacter').addEventListener('click', async () => {
   if (!state.cutout) { setStatus('请先抠出角色'); return; }
