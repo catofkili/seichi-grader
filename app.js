@@ -1438,7 +1438,10 @@ function gifLzw(indices) {
     write(prefix);
     if (nextCode < 4096) {
       dict.set(key, nextCode++);
-      if (nextCode === (1 << codeSize) && codeSize < 12) codeSize++;
+      // GIF 解码器在读到“下一条”码时才把同一条词典项加入表；
+      // 编码端已提前一步加入，所以位宽也必须晚一项升级（> 而非 ===），
+      // 否则从 9 位切到 10 位时比特流会错位，生成损坏的 GIF。
+      if (nextCode > (1 << codeSize) && codeSize < 12) codeSize++;
     } else { write(clear); reset(); }
     prefix = value;
   }
