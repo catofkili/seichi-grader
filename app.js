@@ -1347,8 +1347,8 @@ $('btnExportLut').addEventListener('click', () => {
   }, 30);
 });
 
-function makeCompareCanvas(maxWidth = 0) {
-  const layout = $('layout').value;
+function makeCompareCanvas(maxWidth = 0, layoutOverride = '') {
+  const layout = layoutOverride || $('layout').value;
   const anime = state.anime, gw = state.gradedData.width, gh = state.gradedData.height;
   // 临时画布把各图绘制出来
   const tmpGraded = document.createElement('canvas');
@@ -1413,13 +1413,35 @@ function makeCompareCanvas(maxWidth = 0) {
   return out;
 }
 
-function exportCompareLayout() {
-  const out = makeCompareCanvas();
-  download(out.toDataURL('image/png'), 'seichi-compare.png');
+function exportCompareLayout(layoutOverride = '') {
+  const out = makeCompareCanvas(0, layoutOverride);
+  const suffix = layoutOverride ? `-${layoutOverride}` : '';
+  download(out.toDataURL('image/png'), `seichi-compare${suffix}.png`);
 }
 
 $('btnExportCompare').addEventListener('click', exportCompareLayout);
 $('btnExportCompareLayout').addEventListener('click', exportCompareLayout);
+
+// 与页面“叠加”模式一致：动画参考图按 cover 裁齐到实景画幅，透明度使用当前滑杆值。
+function makeOverlayCompareCanvas(maxWidth = 0) {
+  const src = $('canvasGraded');
+  const scale = maxWidth ? Math.min(1, maxWidth / src.width) : 1;
+  const out = document.createElement('canvas');
+  out.width = Math.max(2, Math.round(src.width * scale));
+  out.height = Math.max(2, Math.round(src.height * scale));
+  const ctx = out.getContext('2d');
+  ctx.drawImage(src, 0, 0, out.width, out.height);
+  ctx.globalAlpha = Number($('overlayOpacity').value) / 100;
+  ctx.drawImage($('canvasAnimeOverlay'), 0, 0, out.width, out.height);
+  ctx.globalAlpha = 1;
+  return out;
+}
+
+function exportOverlayCompare() {
+  const out = makeOverlayCompareCanvas();
+  download(out.toDataURL('image/png'), 'seichi-overlay-compare.png');
+  setStatus(`已导出叠加对照图 · 动画透明度 ${$('overlayOpacity').value}%`);
+}
 
 function drawExportHubPreview(canvasId, source) {
   const canvas = $(canvasId), maxW = 340, maxH = 190;
@@ -1435,6 +1457,11 @@ function drawExportHubPreview(canvasId, source) {
 function renderExportHubPreviews() {
   if (!state.gradedData || !state.anime) return;
   drawExportHubPreview('hubPreviewImage', $('canvasGraded'));
+  drawExportHubPreview('hubPreviewOverlay', makeOverlayCompareCanvas(340));
+  drawExportHubPreview('hubPreviewUpdown', makeCompareCanvas(340, 'updown'));
+  drawExportHubPreview('hubPreviewLeftright', makeCompareCanvas(340, 'leftright'));
+  drawExportHubPreview('hubPreviewTriple', makeCompareCanvas(340, 'triple'));
+  drawExportHubPreview('hubPreviewPostcard', makeCompareCanvas(340, 'postcard'));
   drawExportHubPreview('hubPreviewCompare', makeCompareCanvas(340));
   const wipe = makeWipeFrameCanvas(340);
   drawWipeFrame(wipe.frame.getContext('2d'), wipe.original, wipe.graded, wipe.w, wipe.h, .5);
@@ -1464,8 +1491,23 @@ $('exportHubModal').addEventListener('click', (e) => { if (e.target === $('expor
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('exportHubModal').hidden) closeExportHub(); });
 document.querySelectorAll('[data-export-action]').forEach((card) => {
   card.addEventListener('click', () => {
+    const action = card.dataset.exportAction;
+    const compareLayouts = {
+      'compare-updown': 'updown', 'compare-leftright': 'leftright',
+      'compare-triple': 'triple', 'compare-postcard': 'postcard',
+    };
+    if (action === 'overlay') {
+      closeExportHub();
+      setTimeout(exportOverlayCompare, 0);
+      return;
+    }
+    if (compareLayouts[action]) {
+      closeExportHub();
+      setTimeout(() => exportCompareLayout(compareLayouts[action]), 0);
+      return;
+    }
     const buttons = { image: 'btnExportImg', compare: 'btnExportCompare', wipe: 'btnExportWipe', morph: 'btnExportMorph', apng: 'btnExportApng', character: 'btnExportCharacter', batch: 'btnBatchExport', lut: 'btnExportLut' };
-    const target = $(buttons[card.dataset.exportAction]);
+    const target = $(buttons[action]);
     if (!target || target.disabled) return;
     closeExportHub();
     setTimeout(() => target.click(), 0);

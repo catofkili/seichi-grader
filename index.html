@@ -370,7 +370,12 @@
       </div>
       <div class="export-hub-grid">
         <button class="export-card" data-export-action="image"><canvas id="hubPreviewImage"></canvas><b>调色图</b><span>高分辨率 JPEG</span></button>
-        <button class="export-card" data-export-action="compare"><canvas id="hubPreviewCompare"></canvas><b id="hubCompareTitle">对比图</b><span>按当前布局导出 PNG</span></button>
+        <button class="export-card" data-export-action="overlay"><canvas id="hubPreviewOverlay"></canvas><b>叠加对照图</b><span>动画覆盖实景 · 按当前透明度导出 PNG</span></button>
+        <button class="export-card" data-export-action="compare-updown"><canvas id="hubPreviewUpdown"></canvas><b>上下对照图</b><span>动画在上，实景在下 · PNG</span></button>
+        <button class="export-card" data-export-action="compare-leftright"><canvas id="hubPreviewLeftright"></canvas><b>左右对照图</b><span>动画在左，实景在右 · PNG</span></button>
+        <button class="export-card" data-export-action="compare-triple"><canvas id="hubPreviewTriple"></canvas><b>三联对比图</b><span>动画、原图、调色后 · PNG</span></button>
+        <button class="export-card" data-export-action="compare-postcard"><canvas id="hubPreviewPostcard"></canvas><b>巡礼卡片</b><span>此处 / 彼处标题卡 · PNG</span></button>
+        <button class="export-card" data-export-action="compare"><canvas id="hubPreviewCompare"></canvas><b id="hubCompareTitle">当前设置的对比图</b><span>使用下方“更多导出”内的布局设置</span></button>
         <button class="export-card" data-export-action="wipe"><canvas id="hubPreviewWipe"></canvas><b>滑动对比动图</b><span>4 秒 WebM / MP4</span></button>
         <button class="export-card" data-export-action="morph"><canvas id="hubPreviewMorph"></canvas><b>动画 → 实景 GIF</b><span>约 2 秒 GIF · 分享兼容</span></button>
         <button class="export-card export-card-text" data-export-action="apng"><i>HD</i><b>高清动图 APNG</b><span>同内容全彩 · 体积较大</span></button>
@@ -381,6 +386,6 @@
     </div>
   </div>
 
-  <script type="module" src="./app.js?v=20260717-maskops"></script>
+  <script type="module" src="./app.js?v=20260717-export-all"></script>
 </body>
 </html>
