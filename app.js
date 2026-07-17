@@ -25,6 +25,7 @@ const state = {
   transform: null,
   cutout: null,        // 清理后的角色 canvas（bbox 裁剪）
   rawAlpha: null,      // 抠图原始 alpha（Uint8，与 anime 同尺寸），供阈值/收边重算
+  forcedAlpha: null,   // 用户蓝色画笔强制保留区；始终盖过算法结果与阈值/收边
   charSeg: null,       // AI 检测流水线结果 { chars, included:Set }，供勾选角色重合并
   rawW: 0, rawH: 0,
   charPos: { cx: 0.5, cy: 0.62 }, // 角色中心在场景中的归一化位置
@@ -524,6 +525,9 @@ function applyRefine(resetPos) {
   const thr = parseInt($('maskThr').value, 10);
   const erode = parseInt($('maskErode').value, 10);
   const clean = cleanupAlpha(state.rawAlpha, w, h, { thr, erode, featherR: 2 });
+  if (state.forcedAlpha?.length === clean.length) {
+    for (let i = 0; i < clean.length; i++) if (state.forcedAlpha[i]) clean[i] = 255;
+  }
   const { bbox, coverage } = alphaBBox(clean, w, h);
   state.cutout = bbox ? cutoutCanvas(state.anime.imgData, { alpha: clean, bbox }) : null;
   if (bbox) {
@@ -585,7 +589,7 @@ async function handleAnimeData(data) {
   };
   state.gradeCache = null;
   renderPalette(extractPalette(data.imgData, 6, 4, { ignoreBottomRatio: $('ignoreSub').checked ? 0.12 : 0 }));
-  state.cutout = null; state.rawAlpha = null; setCharSeg(null); invalidateHarmonize();
+  state.cutout = null; state.rawAlpha = null; state.forcedAlpha = null; setCharSeg(null); invalidateHarmonize();
   $('btnExtract').disabled = false;
   $('btnExtractAI').disabled = false;
   $('btnLasso').disabled = false;
@@ -1974,7 +1978,10 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 // 走与自动流水线相同的"框裁剪 → ISNet → SAM 兜底"，笔迹质心作为 SAM 提示点。
 // shape：rect=拖矩形（默认）| ellipse=拖圆 | free=自由画笔。
 // 三种形状统一落成 pts 多边形（圆用 48 边形逼近），包围盒/质心/擦除逻辑全复用。
-const lassoState = { pts: [], drawing: false, busy: false, mode: 'extract', shape: 'rect' };
+const lassoState = {
+  pts: [], drawing: false, busy: false, mode: 'extract', shape: 'rect',
+  keepMode: false, keepDrawing: false, keepStrokes: [],
+};
 
 function lassoReady() {
   if (lassoState.pts.length < 4) return false;
@@ -1983,6 +1990,10 @@ function lassoReady() {
 }
 
 function updateLassoTip() {
+  if (lassoState.keepMode) {
+    $('lassoTip').textContent = '蓝色画笔：涂过的部分会强制保留，不受算法抠像结果影响';
+    return;
+  }
   const verb = lassoState.mode === 'erase'
     ? '要从抠图中擦掉的区域'
     : lassoState.mode === 'algorithm' ? '要由算法抠取的角色' : '要由模型抠取的角色';
@@ -2005,6 +2016,29 @@ function lassoRedraw() {
     ctx.closePath(); ctx.fill(); ctx.stroke();
     ctx.restore();
   }
+  if (lassoState.keepStrokes.length) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(88,166,255,.95)';
+    ctx.fillStyle = 'rgba(88,166,255,.18)';
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (const stroke of lassoState.keepStrokes) {
+      if (!stroke.pts.length) continue;
+      ctx.lineWidth = stroke.width;
+      ctx.beginPath(); ctx.moveTo(stroke.pts[0][0], stroke.pts[0][1]);
+      for (let i = 1; i < stroke.pts.length; i++) ctx.lineTo(stroke.pts[i][0], stroke.pts[i][1]);
+      ctx.stroke();
+      if (stroke.pts.length === 1) { ctx.beginPath(); ctx.arc(stroke.pts[0][0], stroke.pts[0][1], stroke.width / 2, 0, Math.PI * 2); ctx.fill(); }
+    }
+    ctx.restore();
+  }
+}
+
+function updateKeepBrushUI() {
+  const available = lassoState.mode !== 'erase';
+  $('btnLassoKeep').hidden = !available;
+  $('lassoKeepSize').hidden = !available || !lassoState.keepMode;
+  $('btnLassoKeep').classList.toggle('keep-on', lassoState.keepMode);
+  $('btnLassoKeep').setAttribute('aria-pressed', String(lassoState.keepMode));
 }
 
 function lassoBBox() {
@@ -2023,9 +2057,10 @@ function openLasso(mode = 'extract') {
   if (!state.anime) return;
   const c = $('lassoCanvas');
   c.width = state.anime.width; c.height = state.anime.height;
-  lassoState.pts = []; lassoState.drawing = false;
+  lassoState.pts = []; lassoState.drawing = false; lassoState.keepMode = false; lassoState.keepDrawing = false; lassoState.keepStrokes = [];
   lassoState.mode = mode;
   updateLassoTip();
+  updateKeepBrushUI();
   $('btnLassoRun').textContent = mode === 'erase' ? '擦除圈选区域'
     : mode === 'algorithm' ? '算法抠取圈选区域' : '模型抠取圈选区域';
   $('btnLassoRun').disabled = true;
@@ -2045,6 +2080,29 @@ function extractAlgorithmInRegion(box) {
     box: { ...box, score: 1 }, rect: { ...box }, score: 1,
     alpha: res.alpha, empty: !res.bbox, via: 'algorithm', manual: true,
   };
+}
+
+function applyForcedKeepStrokes(strokes) {
+  if (!strokes.length || !state.rawAlpha || !state.rawW || !state.rawH) return 0;
+  const mask = document.createElement('canvas'); mask.width = state.rawW; mask.height = state.rawH;
+  const ctx = mask.getContext('2d');
+  ctx.strokeStyle = '#fff'; ctx.fillStyle = '#fff'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (const stroke of strokes) {
+    if (!stroke.pts.length) continue;
+    ctx.lineWidth = stroke.width;
+    ctx.beginPath(); ctx.moveTo(stroke.pts[0][0], stroke.pts[0][1]);
+    for (let i = 1; i < stroke.pts.length; i++) ctx.lineTo(stroke.pts[i][0], stroke.pts[i][1]);
+    ctx.stroke();
+    if (stroke.pts.length === 1) { ctx.beginPath(); ctx.arc(stroke.pts[0][0], stroke.pts[0][1], stroke.width / 2, 0, Math.PI * 2); ctx.fill(); }
+  }
+  const pixels = ctx.getImageData(0, 0, mask.width, mask.height).data;
+  let added = 0;
+  if (!state.forcedAlpha || state.forcedAlpha.length !== state.rawAlpha.length) state.forcedAlpha = new Uint8ClampedArray(state.rawAlpha.length);
+  for (let i = 0, p = 3; p < pixels.length; i++, p += 4) {
+    if (pixels[p] && !state.forcedAlpha[i]) { state.forcedAlpha[i] = 255; added++; }
+    if (pixels[p]) state.rawAlpha[i] = 255;
+  }
+  return added;
 }
 
 // 圈选核心：模型模式走 Worker；算法模式只处理圈选区域，避免把整幅画面当作主体猜。
@@ -2078,11 +2136,13 @@ async function runLassoBox(box, centroid) {
     setCharSeg(seg);
     const hadCutout = !!state.cutout;
     applyCharSelection(!hadCutout);
+    const forced = applyForcedKeepStrokes(lassoState.keepStrokes);
+    if (forced) applyRefine(false);
     const ok = found.filter((c) => !c.empty).length;
     const method = lassoState.mode === 'algorithm' ? '算法' : '模型';
     $('extractStatus').textContent = ok === 0
       ? `圈选区域没有找到明显前景——试着圈大一点、或让圈更贴近角色`
-      : `${method}已抠出 ${ok} 个角色 · 可勾选/调阈值/拖拽`;
+      : `${method}已抠出 ${ok} 个角色${forced ? ` · 已强制保留 ${forced.toLocaleString()} 个像素` : ''} · 可勾选/调阈值/拖拽`;
     return found;
   } catch (e) {
     console.error(e);
@@ -2097,7 +2157,13 @@ async function runLassoBox(box, centroid) {
 $('btnLasso').addEventListener('click', openLasso);
 $('btnEraseMask').addEventListener('click', () => openLasso('erase'));
 $('btnLassoClose').addEventListener('click', closeLasso);
-$('btnLassoClear').addEventListener('click', () => { lassoState.pts = []; $('btnLassoRun').disabled = true; lassoRedraw(); });
+$('btnLassoClear').addEventListener('click', () => { lassoState.pts = []; lassoState.keepStrokes = []; $('btnLassoRun').disabled = true; lassoRedraw(); });
+$('btnLassoKeep').addEventListener('click', () => {
+  if (lassoState.mode === 'erase') return;
+  lassoState.keepMode = !lassoState.keepMode;
+  updateLassoTip(); updateKeepBrushUI(); lassoRedraw();
+});
+$('lassoKeepBrush').addEventListener('input', () => lassoRedraw());
 $('btnLassoRun').addEventListener('click', async () => {
   const box = lassoBBox();
   if (box.w < 12 || box.h < 12) { $('extractStatus').textContent = '圈得太小了，重新圈一下'; return; }
@@ -2112,7 +2178,11 @@ $('btnLassoRun').addEventListener('click', async () => {
       return hit;
     };
     for (let y = box.y; y < box.y + box.h; y++) for (let x = box.x; x < box.x + box.w; x++) {
-      if (inside(x + .5, y + .5)) state.rawAlpha[y * state.rawW + x] = 0;
+      if (inside(x + .5, y + .5)) {
+        const i = y * state.rawW + x;
+        state.rawAlpha[i] = 0;
+        if (state.forcedAlpha) state.forcedAlpha[i] = 0;
+      }
     }
     closeLasso();
     const coverage = applyRefine(false);
@@ -2147,13 +2217,23 @@ $('btnLassoRun').addEventListener('click', async () => {
     try { c.setPointerCapture(e.pointerId); } catch { /* 某些环境/合成事件会抛，不影响绘制 */ }
     lassoState.drawing = true;
     anchor = toImg(e);
-    lassoState.pts = lassoState.shape === 'free' ? [anchor] : [];
+    if (lassoState.keepMode) {
+      lassoState.keepDrawing = true;
+      lassoState.keepStrokes.push({ pts: [anchor], width: Number($('lassoKeepBrush').value) });
+    } else {
+      lassoState.keepDrawing = false;
+      lassoState.pts = lassoState.shape === 'free' ? [anchor] : [];
+    }
     lassoRedraw();
   });
   c.addEventListener('pointermove', (e) => {
     if (!lassoState.drawing) return;
     const p = toImg(e);
-    if (lassoState.shape === 'free') {
+    if (lassoState.keepDrawing) {
+      const stroke = lassoState.keepStrokes[lassoState.keepStrokes.length - 1];
+      const last = stroke.pts[stroke.pts.length - 1];
+      if (Math.hypot(p[0] - last[0], p[1] - last[1]) > 1) { stroke.pts.push(p); lassoRedraw(); }
+    } else if (lassoState.shape === 'free') {
       const last = lassoState.pts[lassoState.pts.length - 1];
       if (Math.hypot(p[0] - last[0], p[1] - last[1]) > 3) { lassoState.pts.push(p); lassoRedraw(); }
     } else {
@@ -2163,7 +2243,7 @@ $('btnLassoRun').addEventListener('click', async () => {
   });
   const end = () => {
     if (!lassoState.drawing) return;
-    lassoState.drawing = false;
+    lassoState.drawing = false; lassoState.keepDrawing = false;
     $('btnLassoRun').disabled = !lassoReady() || lassoState.busy;
   };
   c.addEventListener('pointerup', end);
@@ -2172,9 +2252,10 @@ $('btnLassoRun').addEventListener('click', async () => {
   $('lassoShapes').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-shape]');
     if (!btn) return;
-    lassoState.shape = btn.dataset.shape;
+    lassoState.shape = btn.dataset.shape; lassoState.keepMode = false; lassoState.keepDrawing = false;
     [...$('lassoShapes').children].forEach((el) => el.classList.toggle('shape-on', el === btn));
     lassoState.pts = []; lassoState.drawing = false;
+    updateKeepBrushUI(); updateLassoTip();
     $('btnLassoRun').disabled = true;
     updateLassoTip();
     lassoRedraw();

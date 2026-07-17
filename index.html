@@ -333,6 +333,10 @@
         <button data-shape="ellipse" class="small">◯ 圆形</button>
         <button data-shape="free" class="small">✎ 画笔</button>
       </div>
+      <div class="lasso-keep">
+        <button type="button" id="btnLassoKeep" class="small">🖊 强制保留</button>
+        <label id="lassoKeepSize" hidden>粗细 <input id="lassoKeepBrush" type="range" min="4" max="160" value="36" /></label>
+      </div>
       <div class="lasso-actions">
         <button id="btnLassoRun" class="primary small" disabled>抠取圈选区域</button>
         <button id="btnLassoClear" class="small">重画</button>

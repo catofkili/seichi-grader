@@ -416,6 +416,10 @@ button.small { padding: 5px 12px; font-size: 12px; border-radius: 8px; }
 .lasso-shapes { display: flex; gap: 6px; }
 .lasso-shapes button { white-space: nowrap; }
 .lasso-shapes .shape-on { border-color: var(--accent); color: var(--accent); }
+.lasso-keep { display: flex; align-items: center; gap: 6px; }
+.lasso-keep #btnLassoKeep.keep-on { border-color: #58a6ff; color: #b8dcff; background: rgba(48, 130, 255, .18); }
+#lassoKeepSize { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+#lassoKeepBrush { width: 92px; accent-color: #58a6ff; }
 
 /* 相机探针入口（临时诊断用） */
 .probe-entry {
