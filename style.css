@@ -447,11 +447,6 @@ details.character-section > summary {
 .character-summary-copy { display: flex; flex-direction: column; gap: 3px; }
 .character-summary-title { display: flex; align-items: center; gap: 7px; font-size: 13px; }
 .character-summary-subtitle { color: #c3cad8; font-size: 11px; font-weight: 400; }
-.feature-badge {
-  padding: 2px 6px; border-radius: 20px;
-  color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  font-size: 9.5px; font-weight: 700; letter-spacing: .04em;
-}
 details.character-section[open] > summary { background: rgba(13, 16, 23, .18); }
 
 /* 空预览态的流程指引 */
