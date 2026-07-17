@@ -1408,14 +1408,17 @@ $('btnExportWipe').addEventListener('click', async () => {
   } finally { btn.disabled = false; }
 });
 
-// GIF 使用固定 3-3-2（256 色）调色板：所有浏览器都能直接打开，不依赖外部编码库。
-// 两秒 12 帧、最长边 720px，既能看清渐变，又避免手机导出时拿十几张大图塞满内存。
-function gifColorTable332() {
+// GIF 最多只能有 256 色。这里用 6×6×6 色立方（216 色）+ 40 阶灰度，
+// 比原来的 3-3-2 色表多出蓝色层次，动画天空、线稿与阴影会更细腻。
+function gifColorTable() {
   const table = new Uint8Array(256 * 3);
-  for (let i = 0; i < 256; i++) {
-    table[i * 3] = Math.round(((i >> 5) & 7) * 255 / 7);
-    table[i * 3 + 1] = Math.round(((i >> 2) & 7) * 255 / 7);
-    table[i * 3 + 2] = Math.round((i & 3) * 255 / 3);
+  for (let r = 0; r < 6; r++) for (let g = 0; g < 6; g++) for (let b = 0; b < 6; b++) {
+    const i = r * 36 + g * 6 + b;
+    table[i * 3] = r * 51; table[i * 3 + 1] = g * 51; table[i * 3 + 2] = b * 51;
+  }
+  for (let i = 0; i < 40; i++) {
+    const v = Math.round(i * 255 / 39), p = (216 + i) * 3;
+    table[p] = table[p + 1] = table[p + 2] = v;
   }
   return table;
 }
@@ -1465,7 +1468,7 @@ const nextPaint = () => new Promise((resolve) => requestAnimationFrame(resolve))
 
 async function makeAnimeToSceneGif() {
   if (!state.anime || !state.gradedData) throw new Error('请先上传动画截图与实景照片');
-  const source = $('canvasGraded'), scale = Math.min(1, 720 / Math.max(source.width, source.height));
+  const source = $('canvasGraded'), scale = Math.min(1, 1080 / Math.max(source.width, source.height));
   const w = Math.max(2, Math.round(source.width * scale)), h = Math.max(2, Math.round(source.height * scale));
   const anime = document.createElement('canvas'); anime.width = w; anime.height = h;
   // canvasAnimeOverlay 已按实景画框 cover 裁好，正好和叠加模式相同。
@@ -1474,7 +1477,7 @@ async function makeAnimeToSceneGif() {
   scene.getContext('2d').drawImage(source, 0, 0, w, h);
   const frame = document.createElement('canvas'); frame.width = w; frame.height = h;
   const ctx = frame.getContext('2d');
-  const pieces = [new TextEncoder().encode('GIF89a'), gifWord(w), gifWord(h), Uint8Array.of(0xf7, 0, 0), gifColorTable332()];
+  const pieces = [new TextEncoder().encode('GIF89a'), gifWord(w), gifWord(h), Uint8Array.of(0xf7, 0, 0), gifColorTable()];
   const frames = 12, delay = Math.round(200 / frames); // 单位 1/100 秒，合计约 2 秒
   for (let index = 0; index < frames; index++) {
     const realOpacity = index / (frames - 1);
@@ -1482,7 +1485,13 @@ async function makeAnimeToSceneGif() {
     ctx.globalAlpha = realOpacity; ctx.drawImage(scene, 0, 0); ctx.globalAlpha = 1;
     const pixels = ctx.getImageData(0, 0, w, h).data;
     const indexed = new Uint8Array(w * h);
-    for (let p = 0, i = 0; p < indexed.length; p++, i += 4) indexed[p] = (pixels[i] & 0xe0) | ((pixels[i + 1] & 0xe0) >> 3) | (pixels[i + 2] >> 6);
+    for (let p = 0, i = 0; p < indexed.length; p++, i += 4) {
+      const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+      const hi = Math.max(r, g, b), lo = Math.min(r, g, b);
+      indexed[p] = hi - lo < 18
+        ? 216 + Math.round(((r + g + b) / 3) * 39 / 255)
+        : Math.round(r / 51) * 36 + Math.round(g / 51) * 6 + Math.round(b / 51);
+    }
     const lzw = gifLzw(indexed);
     // disposal=1：下一帧直接盖上上一帧；不写循环扩展，GIF 结束在实景画面。
     pieces.push(Uint8Array.of(0x21, 0xf9, 4, 0x04, delay & 255, (delay >> 8) & 255, 0, 0));
