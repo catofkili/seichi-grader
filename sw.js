@@ -2,7 +2,7 @@
 // ONNX 模型与 onnxruntime-web 运行时采用 cache-first；它们仅在用户按需下载离线包
 // 或实际运行 AI 时进入 Cache Storage。其余请求不拦截（开发时改代码即时生效）。
 const CACHE = 'seichi-models-v2';
-const APP_CACHE = 'seichi-app-v6'; // v6: 新增 embed.js（找图匹配）
+const APP_CACHE = 'seichi-app-v7'; // v7: 圈选算法与强制保留画笔使用同一版本的页面/脚本
 const APP_SHELL = [
   './', './index.html', './style.css', './app.js', './color.js', './segment.js',
   './ai-segment.js', './detect.js', './sam-segment.js', './ort-env.js', './platform.js', './canvas-util.js', './ai-worker.js', './embed.js',
