@@ -1642,6 +1642,7 @@ const RUNTIME_URLS = [
 ].map((name) => ORT_BASE + name);
 const AUTO_CACHE_URLS = [...AUTO_MODEL_URLS, ...RUNTIME_URLS];
 const MATCH_CACHE_URLS = [...MATCH_MODEL_URLS, ...RUNTIME_URLS]; // 找图也要能离线，故连运行时一起缓存
+let lastDownloadProbe = null;
 
 const cacheKey = (url) => new URL(url, location.href).href;
 async function cacheHas(cache, url) {
@@ -1709,6 +1710,71 @@ async function downloadOfflinePackage(kind, urls, button) {
 $('btnCacheModels').addEventListener('click', () => downloadOfflinePackage('自动抠图离线包', AUTO_CACHE_URLS, $('btnCacheModels')));
 $('btnCacheSam').addEventListener('click', () => downloadOfflinePackage('SAM 高质量兜底包', SAM_MODEL_URLS, $('btnCacheSam')));
 $('btnCacheMatch').addEventListener('click', () => downloadOfflinePackage('找图匹配离线包', MATCH_CACHE_URLS, $('btnCacheMatch')));
+
+// 只发 HEAD 请求，不下载数十 MB 的模型本体。用于定位“模型下载失败”是卡在
+// GitHub Pages、分块模型、还是 jsDelivr 的 ONNX 运行环境。
+const MODEL_DOWNLOAD_PROBES = [
+  ['本站 · 人物检测模型', './models/person-detect.onnx'],
+  ['本站 · 抠图模型分块', './models/isnet-anime-fp16.onnx.part00'],
+  ['jsDelivr · ONNX 运行环境', `${ORT_BASE}ort-wasm-simd-threaded.wasm`],
+];
+
+async function probeModelDownloadRoute(name, url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12_000);
+  const target = new URL(url, location.href);
+  target.searchParams.set('__probe', String(Date.now()));
+  const started = performance.now();
+  try {
+    const response = await fetch(target, { method: 'HEAD', cache: 'no-store', signal: controller.signal });
+    const elapsedMs = Math.round(performance.now() - started);
+    const size = Number(response.headers.get('content-length'));
+    return {
+      name, url: target.origin + target.pathname, ok: response.ok, status: response.status, elapsedMs,
+      size: Number.isFinite(size) && size > 0 ? size : null,
+      error: response.ok ? null : `HTTP ${response.status}`,
+    };
+  } catch (error) {
+    return {
+      name, url: target.origin + target.pathname, ok: false, status: null,
+      elapsedMs: Math.round(performance.now() - started), size: null,
+      error: error?.name === 'AbortError' ? '12 秒内无响应' : (error?.message || String(error)),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function formatProbeSize(bytes) {
+  return bytes ? `${Math.round(bytes / 1024 / 1024)}MB` : '大小未提供';
+}
+
+$('btnTestModelDownload').addEventListener('click', async () => {
+  const button = $('btnTestModelDownload');
+  const output = $('modelDownloadProbe');
+  button.disabled = true;
+  output.hidden = false; output.className = 'download-probe';
+  output.textContent = '正在检查下载线路…（只测试连接，不下载完整模型）';
+  const routes = [];
+  for (const [name, url] of MODEL_DOWNLOAD_PROBES) {
+    output.textContent = `正在检查：${name}…`;
+    routes.push(await probeModelDownloadRoute(name, url));
+  }
+  let storage = null;
+  try { storage = await navigator.storage?.estimate?.() || null; } catch { /* 浏览器不提供时省略 */ }
+  lastDownloadProbe = { generatedAt: new Date().toISOString(), online: navigator.onLine, routes, storage };
+  const allOk = routes.every((route) => route.ok);
+  output.classList.add(allOk ? 'ok' : 'problem');
+  output.textContent = [
+    allOk ? '下载线路正常：' : '发现可能影响下载的问题：',
+    ...routes.map((route) => route.ok
+      ? `✓ ${route.name} · HTTP ${route.status} · ${route.elapsedMs}ms · ${formatProbeSize(route.size)}`
+      : `✕ ${route.name} · ${route.error || '连接失败'} · ${route.elapsedMs}ms`),
+    '可点“导出诊断信息”并把 JSON 与截图一起反馈。',
+  ].join('\n');
+  button.disabled = false;
+});
+
 $('btnClearModelCache').addEventListener('click', async () => {
   const label = $('modelCacheStatus');
   $('btnClearModelCache').disabled = true;
@@ -1735,6 +1801,7 @@ $('btnExportDiagnostics').addEventListener('click', async () => {
       hasCharacter: !!state.cutout,
     },
     storage: null,
+    modelDownloadProbe: lastDownloadProbe,
     recentErrors,
   };
   try { info.storage = await navigator.storage?.estimate?.() || null; } catch { /* 不支持时省略 */ }

@@ -277,6 +277,13 @@ button.ghost.ai {
   display: flex; flex-direction: column; gap: 7px; font-size: 11px; color: var(--muted);
 }
 .model-cache button { width: 100%; }
+.download-probe {
+  padding: 8px 9px; border-radius: 7px;
+  background: rgba(0, 0, 0, .18); border: 1px solid var(--line);
+  color: var(--muted); font-size: 11px; line-height: 1.55; white-space: pre-line;
+}
+.download-probe.ok { border-color: rgba(91, 183, 123, .65); color: #b7dfc3; }
+.download-probe.problem { border-color: rgba(255, 94, 138, .7); color: #ffc0d0; }
 #btnClearModelCache { color: var(--muted); }
 .thumb { image-orientation: from-image; }
 input[type=range] { accent-color: var(--accent); }
