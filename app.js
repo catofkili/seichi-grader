@@ -740,19 +740,8 @@ function runAIInWorker(imageData, opts = {}) {
 
 $('btnExtract').addEventListener('click', () => {
   if (!state.anime) return;
-  $('extractStatus').textContent = '分析中…';
-  // 让状态文字先渲染
-  setTimeout(() => {
-    const t0 = performance.now();
-    setCharSeg(null);
-    const res = extractForeground(state.anime.imgData, { centerBias: 0.5 });
-    state.rawAlpha = res.alpha; state.rawW = res.width; state.rawH = res.height;
-    const cov = applyRefine(true);
-    const ms = Math.round(performance.now() - t0);
-    $('extractStatus').textContent = state.cutout
-      ? `已提取 · 占画面 ${(cov * 100).toFixed(0)}% · ${ms}ms · 可调阈值/收边/拖拽`
-      : '未找到明显前景，换张图试试';
-  }, 30);
+  // 轻量算法不擅长从整幅复杂动画里猜主体；先由用户圈出范围再处理。
+  openLasso('algorithm');
 });
 
 $('btnExtractAI').addEventListener('click', async () => {
@@ -1994,7 +1983,9 @@ function lassoReady() {
 }
 
 function updateLassoTip() {
-  const verb = lassoState.mode === 'erase' ? '要从抠图中擦掉的区域' : '要抠的角色';
+  const verb = lassoState.mode === 'erase'
+    ? '要从抠图中擦掉的区域'
+    : lassoState.mode === 'algorithm' ? '要由算法抠取的角色' : '要由模型抠取的角色';
   $('lassoTip').textContent = lassoState.shape === 'free'
     ? `随手圈出${verb}——不必精确贴边`
     : `按住拖出一个框住${verb}的${lassoState.shape === 'rect' ? '矩形' : '圆'}——不必精确贴边`;
@@ -2035,7 +2026,8 @@ function openLasso(mode = 'extract') {
   lassoState.pts = []; lassoState.drawing = false;
   lassoState.mode = mode;
   updateLassoTip();
-  $('btnLassoRun').textContent = mode === 'erase' ? '擦除圈选区域' : '抠取圈选区域';
+  $('btnLassoRun').textContent = mode === 'erase' ? '擦除圈选区域'
+    : mode === 'algorithm' ? '算法抠取圈选区域' : '模型抠取圈选区域';
   $('btnLassoRun').disabled = true;
   lassoRedraw();
   $('lassoModal').hidden = false;
@@ -2043,7 +2035,19 @@ function openLasso(mode = 'extract') {
 
 function closeLasso() { $('lassoModal').hidden = true; }
 
-// 圈选核心：bbox + 笔迹质心 → 单框流水线 → 追加为可勾选角色
+function extractAlgorithmInRegion(box) {
+  const crop = document.createElement('canvas');
+  crop.width = box.w; crop.height = box.h;
+  // 用负坐标直接把原图指定区域拷进小画布，算法只面对用户圈出的局部。
+  crop.getContext('2d').putImageData(state.anime.imgData, -box.x, -box.y);
+  const res = extractForeground(crop.getContext('2d').getImageData(0, 0, box.w, box.h), { centerBias: 0.5 });
+  return {
+    box: { ...box, score: 1 }, rect: { ...box }, score: 1,
+    alpha: res.alpha, empty: !res.bbox, via: 'algorithm', manual: true,
+  };
+}
+
+// 圈选核心：模型模式走 Worker；算法模式只处理圈选区域，避免把整幅画面当作主体猜。
 async function runLassoBox(box, centroid) {
   if (lassoState.busy) return null;
   lassoState.busy = true;
@@ -2053,10 +2057,18 @@ async function runLassoBox(box, centroid) {
     $('extractStatus').textContent = `下载模型 ${(recv / 1048576).toFixed(0)}/${(total / 1048576).toFixed(0)}MB`;
   };
   try {
-    const { chars: found } = await runAIInWorker(state.anime.imgData, {
-      job: 'region', box, samPoints: centroid ? [centroid] : [], onStage, onProgress,
-      samFallback: true, mobileModel: DEVICE.isAppleMobile,
-    });
+    let found;
+    if (lassoState.mode === 'algorithm') {
+      onStage('正在对圈选区域进行算法抠像…');
+      await nextPaint(); // 先显示状态文字，再开始轻量同步处理。
+      found = [extractAlgorithmInRegion(box)];
+    } else {
+      const result = await runAIInWorker(state.anime.imgData, {
+        job: 'region', box, samPoints: centroid ? [centroid] : [], onStage, onProgress,
+        samFallback: true, mobileModel: DEVICE.isAppleMobile,
+      });
+      found = result.chars;
+    }
     if (!state.charSeg) state.charSeg = { chars: [], included: new Set() };
     const seg = state.charSeg;
     for (const char of found) {
@@ -2067,9 +2079,10 @@ async function runLassoBox(box, centroid) {
     const hadCutout = !!state.cutout;
     applyCharSelection(!hadCutout);
     const ok = found.filter((c) => !c.empty).length;
+    const method = lassoState.mode === 'algorithm' ? '算法' : '模型';
     $('extractStatus').textContent = ok === 0
-      ? '圈选区域没抠出内容——试着圈大一点、或让圈更贴近角色'
-      : `圈选区抠出 ${ok} 个角色 · 可勾选/调阈值/拖拽`;
+      ? `圈选区域没有找到明显前景——试着圈大一点、或让圈更贴近角色`
+      : `${method}已抠出 ${ok} 个角色 · 可勾选/调阈值/拖拽`;
     return found;
   } catch (e) {
     console.error(e);
