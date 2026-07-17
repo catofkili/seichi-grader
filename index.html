@@ -327,6 +327,10 @@
 
   <div id="lassoModal" class="lasso-modal" hidden>
     <div class="lasso-head">
+      <div class="lasso-guide" id="lassoGuide">
+        <span><b>第一步 · 圈出识别范围</b>：请将目标完全包含在框内。</span>
+        <span><b>第二步 · 强制保留（可选）</b>：识别后用蓝色画笔补回被蒙版遮住的脸、手或发丝。</span>
+      </div>
       <span id="lassoTip">拖出一个框住角色的矩形——不必精确贴边</span>
       <div class="lasso-shapes" id="lassoShapes">
         <button data-shape="rect" class="small shape-on">▭ 矩形</button>
@@ -346,6 +350,6 @@
     <div class="lasso-stage"><canvas id="lassoCanvas"></canvas></div>
   </div>
 
-  <script type="module" src="./app.js?v=20260717-gifdetail"></script>
+  <script type="module" src="./app.js?v=20260717-twostepmask"></script>
 </body>
 </html>

@@ -410,6 +410,9 @@ button.small { padding: 5px 12px; font-size: 12px; border-radius: 8px; }
   display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap;
   padding: 10px 16px; color: var(--muted, #8b93a3); font-size: 13px;
 }
+.lasso-guide { display: flex; width: 100%; gap: 12px; flex-wrap: wrap; color: #c6cfdf; font-size: 12px; }
+.lasso-guide b { color: #fff; }
+.lasso-guide .active { color: #b8dcff; }
 .lasso-actions { display: flex; gap: 8px; }
 .lasso-stage { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 0 12px 12px; }
 #lassoCanvas { max-width: 100%; max-height: 100%; touch-action: none; cursor: crosshair; border-radius: 8px; }
@@ -420,6 +423,7 @@ button.small { padding: 5px 12px; font-size: 12px; border-radius: 8px; }
 .lasso-keep #btnLassoKeep.keep-on { border-color: #58a6ff; color: #b8dcff; background: rgba(48, 130, 255, .18); }
 #lassoKeepSize { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
 #lassoKeepBrush { width: 92px; accent-color: #58a6ff; }
+@media (max-width: 600px) { .lasso-guide { gap: 5px; } }
 
 /* 相机探针入口（临时诊断用） */
 .probe-entry {
