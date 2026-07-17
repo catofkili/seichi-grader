@@ -40,7 +40,25 @@ body {
   padding: 5px 12px; background: var(--panel-2); white-space: nowrap;
 }
 .page { max-width: 1500px; margin: 0 auto; width: 100%; }
+.site-footer {
+  width: 100%; border-top: 1px solid var(--line); margin-top: 4px;
+  padding: 14px max(14px, env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  color: var(--muted); font-size: 11.5px;
+}
+.site-footer-inner {
+  max-width: 1500px; margin: 0 auto;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+}
+.footer-credit { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+.footer-credit strong { color: var(--text); font-size: 12px; }
+.site-footer p { margin: 0; }
+.footer-links { display: flex; gap: 12px; }
+.footer-links a { color: var(--accent-2); text-decoration: none; }
+.footer-links a:hover { text-decoration: underline; }
 @media (max-width: 760px) { .top-nav { display: none; } }
+@media (max-width: 760px) {
+  .site-footer-inner { align-items: flex-start; flex-direction: column; gap: 7px; }
+}
 .workflow {
   display: flex; align-items: center; gap: 14px; padding: 11px 14px 0;
   color: var(--muted); overflow-x: auto; scrollbar-width: none;
