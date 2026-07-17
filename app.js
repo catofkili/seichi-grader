@@ -25,9 +25,8 @@ const state = {
   transform: null,
   cutout: null,        // 清理后的角色 canvas（bbox 裁剪）
   rawAlpha: null,      // 抠图原始 alpha（Uint8，与 anime 同尺寸），只属算法结果，供阈值/收边重算
-  maskOps: [],         // 手工修补操作，按时间序重放：keep(蓝笔)/keepRegion(点选补块)/erase(橡皮擦)
+  maskOps: [],         // 手工修补操作，按时间序重放：keep(补画)/keepRegion(点选补块)/erase(橡皮擦)
   opsOverlay: null,    // maskOps 重放结果缓存 Uint8Array：0 无操作 / 1 强制保留 / 2 强制擦除
-  opsTint: null,       // 强制保留区的蓝色显示层 canvas（圈选弹窗里叠加）
   finalAlpha: null,    // applyRefine 的最终输出 alpha（蒙版预览与点选连通域都以它为准）
   charSeg: null,       // AI 检测流水线结果 { chars, included:Set }，供勾选角色重合并
   rawW: 0, rawH: 0,
@@ -521,13 +520,13 @@ function compositeCharacter(canvas, record = true) {
   if (record) state.charDraw = { dx, dy, dw, dh };
 }
 
-// ---------- 手工修补操作（maskOps）：蓝笔 / 点选补块 / 橡皮擦 ----------
+// ---------- 手工修补操作（maskOps）：补画 / 点选补块 / 橡皮擦 ----------
 // rawAlpha 永远只属算法结果；一切手工修正记录成操作列表，按时间序重放成 opsOverlay，
 // 在 applyRefine 里盖到算法输出上。撤销 = 弹出最后一项全量重放。
 // 这样勾选角色重建 rawAlpha、调阈值/收边都不会丢手工修正，且每一步可逆。
 function rebuildOpsOverlay() {
   const w = state.rawW, h = state.rawH;
-  if (!w || !h || !state.maskOps.length) { state.opsOverlay = null; state.opsTint = null; return; }
+  if (!w || !h || !state.maskOps.length) { state.opsOverlay = null; return; }
   const overlay = new Uint8Array(w * h);
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const ctx = c.getContext('2d', { willReadFrequently: true });
@@ -557,16 +556,6 @@ function rebuildOpsOverlay() {
     for (let i = 0, p = 3; p < d.length; i++, p += 4) if (d[p]) overlay[i] = v;
   }
   state.opsOverlay = overlay;
-  // 蓝色提示层：弹窗第二步里给强制保留的部分染蓝
-  const tint = document.createElement('canvas'); tint.width = w; tint.height = h;
-  const timg = new ImageData(w, h);
-  for (let i = 0, p = 0; i < overlay.length; i++, p += 4) {
-    if (overlay[i] === 1) {
-      timg.data[p] = 88; timg.data[p + 1] = 166; timg.data[p + 2] = 255; timg.data[p + 3] = 64;
-    }
-  }
-  tint.getContext('2d').putImageData(timg, 0, 0);
-  state.opsTint = tint;
 }
 
 function refreshMaskUndoButtons() {
@@ -623,7 +612,7 @@ function applyRefine(resetPos) {
   const thr = parseInt($('maskThr').value, 10);
   const erode = parseInt($('maskErode').value, 10);
   const clean = cleanupAlpha(state.rawAlpha, w, h, { thr, erode, featherR: 2 });
-  // 手工修补层（蓝笔/点选/擦除的时间序重放结果）盖在算法输出之上
+  // 手工修补层（补画/点选/擦除的时间序重放结果）盖在算法输出之上
   if (state.opsOverlay?.length === clean.length) {
     const ov = state.opsOverlay;
     for (let i = 0; i < clean.length; i++) {
@@ -694,7 +683,7 @@ async function handleAnimeData(data) {
   state.gradeCache = null;
   renderPalette(extractPalette(data.imgData, 6, 4, { ignoreBottomRatio: $('ignoreSub').checked ? 0.12 : 0 }));
   state.cutout = null; state.rawAlpha = null; setCharSeg(null); invalidateHarmonize();
-  state.maskOps = []; state.opsOverlay = null; state.opsTint = null; state.finalAlpha = null;
+  state.maskOps = []; state.opsOverlay = null; state.finalAlpha = null;
   refreshMaskUndoButtons();
   refreshAIEntryButtons();
   $('matchResults').hidden = true; // 旧结果按旧截图排序，换截图后作废
@@ -2324,14 +2313,14 @@ function lassoReady() {
 function updateLassoTip() {
   if (lassoState.stage === 'refine') {
     $('lassoTip').textContent = lassoState.keepMode
-      ? '蓝色画笔：刷出的部分会立刻并入识别目标'
+      ? '补画：刷过的部分会立刻取消暗蒙版，并入识别目标'
       : lassoState.pickMode
         ? '点选补块：点一下蒙版里的暗块（脸、手、衣角），整块颜色相近的区域会一起并入目标'
-        : '识别结果以外的区域已蒙版；漏掉的脸、手可用「点选补块」整块补回，细碎处用蓝色画笔';
+        : '识别结果以外的区域已蒙版；漏掉的脸、手可用「点选补块」整块补回，细碎处用画笔刷开蒙版';
     return;
   }
   if (lassoState.keepMode) {
-    $('lassoTip').textContent = '蓝色画笔：涂过的部分会强制保留，不受算法抠像结果影响';
+    $('lassoTip').textContent = '补画：涂过的部分会取消暗蒙版，并强制保留，不受算法抠像结果影响';
     return;
   }
   const verb = lassoState.mode === 'erase'
@@ -2349,7 +2338,7 @@ function updateLassoGuide() {
 }
 
 function rebuildLassoMaskOverlay() {
-  // 以最终 alpha（算法+手工修补+阈值收边之后）为准；蓝笔/点选的效果立即反映在蒙版上
+  // 以最终 alpha（算法+手工修补+阈值收边之后）为准；补画/点选的效果立即反映在蒙版上
   const src = state.finalAlpha?.length === state.rawW * state.rawH ? state.finalAlpha : state.rawAlpha;
   if (!src || !state.rawW || !state.rawH) { lassoState.maskOverlay = null; return; }
   const overlay = document.createElement('canvas'); overlay.width = state.rawW; overlay.height = state.rawH;
@@ -2366,7 +2355,6 @@ function lassoRedraw() {
   const c = $('lassoCanvas'), ctx = c.getContext('2d');
   ctx.putImageData(state.anime.imgData, 0, 0);
   if (lassoState.stage === 'refine' && lassoState.maskOverlay) ctx.drawImage(lassoState.maskOverlay, 0, 0);
-  if (lassoState.stage === 'refine' && state.opsTint) ctx.drawImage(state.opsTint, 0, 0);
   if (lassoState.stage === 'select' && lassoState.pts.length > 1) {
     ctx.save();
     ctx.lineWidth = Math.max(2, c.width / 350);
@@ -2380,8 +2368,9 @@ function lassoRedraw() {
   }
   if (lassoState.keepStrokes.length) {
     ctx.save();
-    ctx.strokeStyle = 'rgba(88,166,255,.95)';
-    ctx.fillStyle = 'rgba(88,166,255,.18)';
+    // 仅在正在落笔时给一条浅色笔迹作即时反馈；提交后不再上色，直接露出原图。
+    ctx.strokeStyle = 'rgba(255,255,255,.92)';
+    ctx.fillStyle = 'rgba(255,255,255,.10)';
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     for (const stroke of lassoState.keepStrokes) {
       if (!stroke.pts.length) continue;
@@ -2536,7 +2525,7 @@ async function runLassoBox(box, centroid) {
       lassoRedraw();
       return found;
     }
-    $('extractStatus').textContent = `${method}已识别 ${ok} 个角色 · 漏掉的部分可点选补块或蓝笔补画`;
+    $('extractStatus').textContent = `${method}已识别 ${ok} 个角色 · 漏掉的部分可点选补块或用画笔刷开蒙版`;
     lassoState.stage = 'refine';
     lassoState.keepMode = false; lassoState.pickMode = false;
     lassoState.refineBox = { ...box };
@@ -2618,7 +2607,7 @@ $('btnLassoRun').addEventListener('click', async () => {
     try { c.setPointerCapture(e.pointerId); } catch { /* 某些环境/合成事件会抛，不影响绘制 */ }
     anchor = toImg(e);
     if (lassoState.stage === 'refine') {
-      // 第二步：点选补块单击即生效；蓝笔开始记一笔；两者都没开就忽略，
+      // 第二步：点选补块单击即生效；补画开始记一笔；两者都没开就忽略，
       // 绝不能改写第一步的选区 pts（否则「完成抠像」会被误禁用）
       if (lassoState.pickMode) { runPickAt(anchor); return; }
       if (!lassoState.keepMode) return;
@@ -2638,7 +2627,7 @@ $('btnLassoRun').addEventListener('click', async () => {
     if (!res) return;
     if (res.reason === 'outside') { $('extractStatus').textContent = '请点在第一步圈出的范围内'; return; }
     if (res.reason === 'already') { $('extractStatus').textContent = '这一块已经是保留目标了'; return; }
-    if (res.reason === 'toobig') { $('extractStatus').textContent = '这一片太大（超过圈选框四成），换个更小的暗块点，或改用蓝笔'; return; }
+    if (res.reason === 'toobig') { $('extractStatus').textContent = '这一片太大（超过圈选框四成），换个更小的暗块点，或改用画笔补画'; return; }
     pushMaskOp({ type: 'keepRegion', idx: res.idx });
     rebuildLassoMaskOverlay();
     $('extractStatus').textContent = `已整块补入 ${res.idx.length.toLocaleString()} 个像素 · 可继续点选或撤销`;
@@ -2664,7 +2653,7 @@ $('btnLassoRun').addEventListener('click', async () => {
     const lastKeepStroke = lassoState.keepDrawing ? lassoState.keepStrokes[lassoState.keepStrokes.length - 1] : null;
     lassoState.drawing = false; lassoState.keepDrawing = false;
     if (lastKeepStroke && lassoState.stage === 'refine') {
-      // 落笔即提交成一个可撤销的 keep 操作；提交后的显示交给蓝色 tint 层
+      // 落笔即提交成一个可撤销的 keep 操作；提交后最终 alpha 变为不透明，暗蒙版随即消失。
       lassoState.keepStrokes = [];
       pushMaskOp({ type: 'keep', stroke: lastKeepStroke });
       rebuildLassoMaskOverlay();
