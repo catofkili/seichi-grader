@@ -349,7 +349,7 @@
       <nav class="footer-links" aria-label="项目链接">
         <a href="https://ai.meta.com/resources/models-and-libraries/dinov3-license/" target="_blank" rel="noreferrer">Built with DINOv3</a>
         <a href="https://github.com/catofkili/seichi-grader" target="_blank" rel="noreferrer">GitHub</a>
-        <a href="https://github.com/catofkili/seichi-grader/commit/236659a" target="_blank" rel="noreferrer">版本 · 236659a</a>
+        <a id="verLink" href="https://github.com/catofkili/seichi-grader/commit/__GIT_SHA__" target="_blank" rel="noreferrer">版本 · __GIT_SHA__</a>
         <a href="mailto:lovelysummerchannel@outlook.com?subject=%E8%81%96%E5%9C%B0%E5%B7%A1%E7%A4%BC%20%E8%B0%83%E8%89%B2%E7%94%9F%E6%88%90%E5%99%A8%20%E5%8F%8D%E9%A6%88">问题反馈</a>
       </nav>
     </div>
@@ -409,6 +409,17 @@
     </div>
   </div>
 
+  <script>
+    // 部署时由 GitHub Actions 把占位符替换成真实 commit；未注入（本地开发）则降级显示 dev
+    (function () {
+      var a = document.getElementById('verLink');
+      var placeholder = '__GIT' + '_SHA__'; // 拆写，避免被 CI 的 sed 一并替换
+      if (a && a.textContent.indexOf(placeholder) >= 0) {
+        a.textContent = '版本 · dev';
+        a.href = 'https://github.com/catofkili/seichi-grader';
+      }
+    })();
+  </script>
   <script type="module" src="./app.js?v=20260718-stack-touch"></script>
 </body>
 </html>

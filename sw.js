@@ -2,7 +2,7 @@
 // ONNX 模型与 onnxruntime-web 运行时采用 cache-first；它们仅在用户按需下载离线包
 // 或实际运行 AI 时进入 Cache Storage。其余请求不拦截（开发时改代码即时生效）。
 const CACHE = 'seichi-models-v4';
-const APP_CACHE = 'seichi-app-v27'; // v27: 上下预览与上下导出取消中缝
+const APP_CACHE = 'seichi-app-v28'; // v28: footer 版本号改由 CI 注入真实 commit
 const APP_SHELL = [
   './', './index.html', './style.css', './app.js', './color.js', './segment.js',
   './ai-segment.js', './detect.js', './sam-segment.js', './ort-env.js', './platform.js', './canvas-util.js', './ai-worker.js', './embed.js',
