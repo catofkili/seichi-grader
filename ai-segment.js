@@ -76,7 +76,7 @@ function cropImageData(imageData, rect) {
 
 // 整图直抠：返回 { alpha, width, height, bbox, coverage, empty }
 async function extractForegroundAI(imageData, opts = {}) {
-  const modelUrl = opts.modelUrl || `${MODEL_BASE}/models/isnet-anime-fp16.onnx`;
+  const modelUrl = opts.modelUrl || `${MODEL_BASE}/models/isnet-anime-w8.onnx`;
   const size = opts.inputSize || DEFAULT_SIZE;
   // ISNet 含 ceil_mode 的 MaxPool，WebGPU EP 暂不支持，统一用 WASM
   const { ort, session, ep } = await getSession(modelUrl, {

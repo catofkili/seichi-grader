@@ -25,6 +25,8 @@ __pycache__/
 # ISNet 完整模型改为分块分发（>代理传输上限），完整文件仅本地保留
 models/isnet-anime-fp16.onnx
 models/isnet-anime-512-fp16.onnx
+models/isnet-anime-w8.onnx
+models/isnet-anime-512-w8.onnx
 
 # 找图匹配模型的 fp32 中间产物（84MB，只有 int8 版参与分发）
 models/scene-embed-fp32.onnx

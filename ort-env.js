@@ -30,11 +30,11 @@ async function loadOrt() {
 }
 
 // 分块模型清单：GitHub Pages 不解析 Git LFS，本机代理又拦 >约 40MB 的推送，
-// 且 Cloudflare Pages 单文件上限 25MiB，故两个 84MB 的 ISNet 拆成 22MiB 分块
-// 入库（models/xxx.onnx.part00..03），浏览器按序取回再拼成完整 ArrayBuffer。值 = 分块数。
+// 且 Cloudflare Pages 单文件上限 25MiB，故两个 ~42MB 的 ISNet(权重 int8) 拆成
+// 22MiB 分块入库（models/xxx.onnx.part00..01），浏览器取回后拼成完整 ArrayBuffer。值 = 分块数。
 const CHUNKED_MODELS = {
-  'isnet-anime-fp16.onnx': 4,
-  'isnet-anime-512-fp16.onnx': 4,
+  'isnet-anime-w8.onnx': 2,
+  'isnet-anime-512-w8.onnx': 2,
 };
 
 // 带进度的单文件下载，返回 { chunks:Uint8Array[], received }。
