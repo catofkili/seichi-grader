@@ -1,10 +1,10 @@
 // embed.js — 场景嵌入（DINOv3 ViT-S/16 int8，21MB）：动画截图 ↔ 实景照片相似度匹配。
 // 每张图编码成 384 维单位向量，余弦相似度=点积；换一张截图重排序只需重算截图向量。
 // 全部在访客浏览器里跑，服务器零算力成本。按需懒加载。
-import { getSession } from './ort-env.js';
+import { getSession, MODEL_BASE } from './ort-env.js';
 import { createCanvas } from './canvas-util.js';
 
-const MODEL_URL = './models/scene-embed-int8.onnx';
+const MODEL_URL = `${MODEL_BASE}/models/scene-embed-int8.onnx`;
 const SIZE = 224;
 // timm vit_small_patch16_dinov3 预处理：/255 后按 ImageNet 均值方差归一化
 const MEAN = [0.485, 0.456, 0.406];

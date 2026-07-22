@@ -1,10 +1,10 @@
 // detect.js — 浏览器内动画人物检测（YOLOv8s static-int8 ONNX，deepghs/anime_person_detection）。
 // 用途：先找到"哪里有角色"，再把每个框裁下来交给 ISNet 抠图，
 // 解决显著性模型抠不到小角色、误抠食物/建筑的问题。
-import { getSession, evictSession } from './ort-env.js';
+import { getSession, evictSession, MODEL_BASE } from './ort-env.js';
 import { createCanvas } from './canvas-util.js';
 
-const MODEL_URL = './models/person-detect.onnx';
+const MODEL_URL = `${MODEL_BASE}/models/person-detect.onnx`;
 
 // 检测人物框。返回 [{x, y, w, h, score}]（原图像素坐标，按置信度降序）。
 // opts.size: 推理分辨率，默认 1024；远景小人用 1536 + 低 conf。

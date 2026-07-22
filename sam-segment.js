@@ -2,11 +2,11 @@
 // ISNet 是显著性模型，对远景小人/骑车/夜景角色经常完全无响应（rawMax≈0）；
 // SAM 靠检测框中心的提示点强制它分割指定位置，正好补这个短板。
 // 全部在访客浏览器里跑，encoder 23MB + decoder 17MB，仅在需要兜底时才懒加载。
-import { getSession } from './ort-env.js';
+import { getSession, MODEL_BASE } from './ort-env.js';
 import { createCanvas } from './canvas-util.js';
 
-const ENC_URL = './models/sam-encoder.onnx';
-const DEC_URL = './models/sam-decoder.onnx';
+const ENC_URL = `${MODEL_BASE}/models/sam-encoder.onnx`;
+const DEC_URL = `${MODEL_BASE}/models/sam-decoder.onnx`;
 const SIZE = 1024;
 // SamImageProcessor 的 ImageNet 归一化（÷255 后减均值除方差）
 const MEAN = [0.485, 0.456, 0.406];

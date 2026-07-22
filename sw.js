@@ -1,8 +1,8 @@
 // sw.js — 模型持久缓存。
 // ONNX 模型与 onnxruntime-web 运行时采用 cache-first；它们仅在用户按需下载离线包
 // 或实际运行 AI 时进入 Cache Storage。其余请求不拦截（开发时改代码即时生效）。
-const CACHE = 'seichi-models-v5'; // v5: ISNet 分块从 30MB×3 改为 22MiB×4（Cloudflare Pages 25MiB 限制），旧分块字节范围已变，必须弃用旧缓存
-const APP_CACHE = 'seichi-app-v29'; // v29: 随分块改动更新离线壳
+const CACHE = 'seichi-models-v6'; // v6: 模型改从 GitHub Pages 加载（大陆直连远快于 Cloudflare），旧同源缓存键作废
+const APP_CACHE = 'seichi-app-v30'; // v30: 随模型托管迁移更新离线壳
 const APP_SHELL = [
   './', './index.html', './style.css', './app.js', './color.js', './segment.js',
   './ai-segment.js', './detect.js', './sam-segment.js', './ort-env.js', './platform.js', './canvas-util.js', './ai-worker.js', './embed.js',

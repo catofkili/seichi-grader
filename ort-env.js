@@ -6,6 +6,12 @@ const ORT_VER = '1.19.2';
 const ORT_URL = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VER}/dist/ort.webgpu.mjs`;
 const WASM_PATHS = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VER}/dist/`;
 
+// 模型从 GitHub Pages 加载，页面本体留在 Cloudflare。实测大陆直连（真实用户无梯子）
+// GitHub 明显快于 Cloudflare（CF 常卡死/龟速），而页面留 CF 才有 COOP/COEP →
+// crossOriginIsolated → ONNX 多线程。GitHub 对模型文件发 ACAO:*，故 COEP 页面可跨域取。
+// 换托管只改这一行；设为 '.' 即回落到同源（页面所在站点）。
+const MODEL_BASE = 'https://anitabi.github.io/seichi-grader';
+
 let ortPromise = null;
 const sessionCache = new Map(); // modelUrl -> Promise<{ort, session, ep}>
 
@@ -141,4 +147,4 @@ async function releaseAllSessions() {
   }));
 }
 
-export { loadOrt, fetchWithProgress, getSession, evictSession, releaseAllSessions };
+export { loadOrt, fetchWithProgress, getSession, evictSession, releaseAllSessions, MODEL_BASE };
