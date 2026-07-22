@@ -37,11 +37,12 @@ const CHUNKED_MODELS = {
   'isnet-anime-512-fp16.onnx': 4,
 };
 
-// 带进度的单文件下载，返回 { chunks:Uint8Array[], received }
-async function fetchStream(url, baseReceived, grandTotal, onProgress) {
+// 带进度的单文件下载，返回 { chunks:Uint8Array[], received }。
+// onChunk(收到的字节数增量) 由调用方累加成总进度，便于多个分块并行下载。
+async function fetchStream(url, onChunk) {
   const resp = await fetch(url);
   if (!resp.ok) throw new Error('模型下载失败 ' + resp.status);
-  if (!resp.body) { const b = new Uint8Array(await resp.arrayBuffer()); onProgress && onProgress(baseReceived + b.length, grandTotal); return { chunks: [b], received: b.length }; }
+  if (!resp.body) { const b = new Uint8Array(await resp.arrayBuffer()); onChunk && onChunk(b.length); return { chunks: [b], received: b.length }; }
   const reader = resp.body.getReader();
   const chunks = [];
   let received = 0;
@@ -50,7 +51,7 @@ async function fetchStream(url, baseReceived, grandTotal, onProgress) {
     if (done) break;
     chunks.push(value);
     received += value.length;
-    onProgress && onProgress(baseReceived + received, grandTotal);
+    onChunk && onChunk(value.length);
   }
   return { chunks, received };
 }
@@ -62,22 +63,24 @@ async function fetchWithProgress(url, onProgress) {
   const parts = CHUNKED_MODELS[name];
 
   if (parts) {
-    // 分块：先各自 HEAD 拿总大小做进度分母（失败则用估算），再顺序流式取回拼接
+    // 分块：先各自 HEAD 拿总大小做进度分母（失败则用估算），再并行流式取回。
+    // 并行下载在高延迟线路（大陆直连海外）上比逐块串行明显更快；
+    // Promise.all 保持数组顺序，拼接顺序不受完成先后影响。
     const urls = Array.from({ length: parts }, (_, i) => `${base}.part${String(i).padStart(2, '0')}`);
     let grandTotal = 0;
     await Promise.all(urls.map(async (u) => {
       try { const h = await fetch(u, { method: 'HEAD' }); grandTotal += +h.headers.get('content-length') || 0; } catch { /* 忽略 */ }
     }));
     if (!grandTotal) grandTotal = parts * 22 * 1024 * 1024; // 估算兜底
-    const all = [];
     let received = 0;
-    for (const u of urls) {
-      const r = await fetchStream(u, received, grandTotal, onProgress);
-      all.push(...r.chunks); received += r.received;
-    }
-    const buf = new Uint8Array(received);
+    const results = await Promise.all(urls.map((u) => fetchStream(u, (n) => {
+      received += n;
+      onProgress && onProgress(received, grandTotal);
+    })));
+    const totalBytes = results.reduce((sum, r) => sum + r.received, 0);
+    const buf = new Uint8Array(totalBytes);
     let pos = 0;
-    for (const c of all) { buf.set(c, pos); pos += c.length; }
+    for (const r of results) for (const c of r.chunks) { buf.set(c, pos); pos += c.length; }
     return buf.buffer;
   }
 
