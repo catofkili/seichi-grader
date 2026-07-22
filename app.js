@@ -2303,6 +2303,9 @@ async function updateModelCacheStatus() {
   } catch (e) { label.textContent = '无法读取模型缓存：' + (e.message || e); }
 }
 
+const fmtMB = (bytes) => (bytes / 1048576).toFixed(1);
+const fmtSpeed = (bps) => (bps >= 1048576 ? `${(bps / 1048576).toFixed(1)} MB/s` : `${Math.max(1, Math.round(bps / 1024))} KB/s`);
+
 async function downloadOfflinePackage(kind, urls, button) {
   const label = $('modelCacheStatus'); button.disabled = true;
   try {
@@ -2311,11 +2314,35 @@ async function downloadOfflinePackage(kind, urls, button) {
     const cache = await caches.open(MODEL_CACHE);
     let done = await countCached(cache, urls);
     for (const url of urls) {
+      const key = cacheKey(url);
       if (await cacheHas(cache, url)) continue;
-      label.textContent = `正在下载${kind} ${done + 1}/${urls.length}…请保持此页面打开`;
-      // cache.add 会等待完整响应写入 Cache Storage。网络中断后，已完成的文件保留；
-      // 再点一次按钮只补未完成的文件，而不是从头下载整个模型。
-      await cache.add(cacheKey(url));
+      const shortName = key.slice(key.lastIndexOf('/') + 1).split('?')[0];
+      // 手动流式下载以显示实时进度与速度（cache.add 无字节反馈，慢和卡死看起来一样）。
+      // 读完整流后才 cache.put，故中断时不写入半个文件——续传语义与原 cache.add 一致。
+      const resp = await fetch(key);
+      if (!resp.ok) throw new Error(`${shortName} ${resp.status}`);
+      const forCache = resp.clone();
+      const total = +resp.headers.get('content-length') || 0;
+      const start = performance.now();
+      let received = 0, lastPaint = 0;
+      if (resp.body) {
+        const reader = resp.body.getReader();
+        for (;;) {
+          const { done: rd, value } = await reader.read();
+          if (rd) break;
+          received += value.length;
+          const now = performance.now();
+          if (now - lastPaint > 250) {
+            lastPaint = now;
+            const speed = received / ((now - start) / 1000 || 1);
+            const size = total ? `${fmtMB(received)}/${fmtMB(total)}MB` : `${fmtMB(received)}MB`;
+            label.textContent = `下载${kind} ${done + 1}/${urls.length} · ${shortName} ${size} · ${fmtSpeed(speed)}`;
+          }
+        }
+      } else {
+        await resp.arrayBuffer();
+      }
+      await cache.put(key, forCache);
       done++;
     }
     await updateModelCacheStatus();
