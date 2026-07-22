@@ -19,7 +19,7 @@
 
 ## 打开网站（推荐，所有系统通用）
 
-直接打开：<https://catofkili.github.io/seichi-grader/>
+直接打开：<https://compose.anitabi.cn/>
 
 如果已下载整个项目，也可以双击 [`打开线上网站.html`](./打开线上网站.html)，它会在默认浏览器中跳转到线上站点；Windows、macOS 和 Linux 都可用。
 
