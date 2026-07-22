@@ -205,6 +205,7 @@ async function readExifGPS(file) {
 function urlToImageData(url) {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    img.crossOrigin = 'anonymous'; // 跨域图（如 anitabi CDN）需带 CORS 才能读像素；同源无副作用
     img.onload = () => {
       let { width, height } = img;
       const scale = Math.min(1, MAX_DIM / Math.max(width, height));
@@ -807,6 +808,37 @@ async function handlePhotoData(data) {
 
 bindDrop('dropAnime', 'fileAnime', 'thumbAnime', handleAnimeData);
 bindDrop('dropPhoto', 'filePhoto', 'thumbPhoto', handlePhotoData);
+
+// 从 anitabi 地图跳转载入：?url=<巡礼点动画截图>，可选 name/bid/pid/g 作展示与预设标识。
+// 仅接受 https 且 anitabi.cn 域名的图，避免被构造链接载入任意外部图片。
+async function loadFromQuery() {
+  const params = new URLSearchParams(location.search);
+  const url = params.get('url');
+  if (!url) return;
+  let u;
+  try { u = new URL(url); } catch { return; }
+  if (u.protocol !== 'https:' || !/(^|\.)anitabi\.cn$/i.test(u.hostname)) {
+    console.warn('忽略不受信任的跳转图片来源：', url); // 静默回到空状态，不打断正常上传引导
+    return;
+  }
+  const name = params.get('name') || '';
+  state.fromMap = {
+    name, bid: params.get('bid') || '', pid: params.get('pid') || '', g: params.get('g') || '',
+  };
+  try {
+    setStatus(name ? `正在载入巡礼点「${name}」的动画截图…` : '正在载入动画截图…');
+    const data = await urlToImageData(url);
+    const thumb = $('thumbAnime'); // 与 bindDrop 一致：更新动画区缩略图
+    if (thumb) { thumb.src = data.url; thumb.hidden = false; }
+    await handleAnimeData(data);
+    setStatus(name
+      ? `已载入「${name}」的动画截图 · 现在上传你在当地拍的照片即可开始调色`
+      : '动画截图已载入 · 现在上传你拍的实景照片开始调色');
+  } catch (e) {
+    setStatus('动画截图载入失败（' + (e.message || e) + '）· 你仍可手动上传');
+  }
+}
+loadFromQuery();
 
 // ---------- 控件 ----------
 $('strength').addEventListener('input', (e) => {
