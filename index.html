@@ -52,6 +52,8 @@
     </ol>
   </nav>
   <main class="layout">
+    <!-- 左列：素材 + 导出。桌面端两块堆在左列使两侧等长；移动端经 display:contents + order 还原为原线性顺序 -->
+    <div class="col col-left">
     <!-- 左：素材 -->
     <section class="panel inputs">
       <div class="sec-title">素材</div>
@@ -96,6 +98,82 @@
         <div class="palette" id="palette"></div>
       </div>
     </section>
+
+    <!-- 导出（桌面端置于左列下方；移动端经 order 仍排在角色合成之后） -->
+    <section class="panel exports">
+      <div class="sec">
+        <div class="sec-title">导出</div>
+        <div class="actions">
+          <button id="btnOpenExportHub" class="primary" disabled>选择导出方式</button>
+          <div hidden>
+            <button id="btnExportImg" disabled>导出调色图</button>
+            <button id="btnShareImg" hidden>保存到照片 / 分享</button>
+            <button id="btnExportCompare" disabled>导出对比图</button>
+            <button id="btnExportWipe" disabled>导出滑动对比动图</button>
+            <button id="btnExportMorph" disabled>导出动画→实景 GIF</button>
+            <button id="btnExportApng" disabled>导出高清动图 APNG（全彩）</button>
+          </div>
+        </div>
+        <input type="file" id="batchFiles" accept="image/jpeg,image/png,image/webp,.heic,.heif,.cr2,.cr3,.nef,.arw,.dng,.orf,.rw2,.raf,.pef,.srw" multiple hidden />
+        <button id="btnBatchExport" disabled hidden>批量套用当前风格并导出</button>
+        <div class="export-note">在导出面板中预览并选择需要的格式；缩略图即时生成，实际文件按选择后才开始制作。</div>
+        <details class="adv">
+          <summary>更多导出与预设 · 布局 / LUT / 预设</summary>
+          <div class="d-body">
+            <div class="ctrl-group">
+              <label>对比布局</label>
+              <select id="layout">
+                <option value="updown">上下对比（动画 / 实景）</option>
+                <option value="leftright">左右对比</option>
+                <option value="triple">三联（动画 · 原图 · 调色）</option>
+                <option value="postcard">巡礼卡片（此处 · 彼处）</option>
+              </select>
+              <button id="btnExportCompareLayout" class="primary" disabled hidden>按此布局导出对比图</button>
+            </div>
+            <div class="ctrl-group compare-meta">
+              <label>卡片标题与地点（可选）</label>
+              <input id="compareTitle" maxlength="48" placeholder="例如：摇曳露营△ · 伊豆" />
+              <input id="comparePlace" maxlength="80" placeholder="地点；照片含 GPS 时会自动附上坐标" />
+            </div>
+            <button id="btnExportLut" disabled hidden>导出高精度 .cube LUT</button>
+            <div class="export-note">65³ LUT 含影调/色彩/饱和度；不含天空分区与辉光。</div>
+            <div class="ctrl-group preset-box">
+              <label>风格预设（保存在本机）</label>
+              <div class="preset-row">
+                <select id="presetSelect"><option value="">选择预设…</option></select>
+                <button id="btnPresetApply" class="small">应用</button>
+              </div>
+              <div class="preset-row">
+                <input id="presetName" maxlength="30" placeholder="例如：摇曳露营·伊豆" />
+                <button id="btnPresetSave" class="small">保存</button>
+                <button id="btnPresetDelete" class="small" disabled>删除</button>
+              </div>
+              <div class="export-note">当前参数会自动恢复；图片不会写入浏览器存储。</div>
+            </div>
+          </div>
+        </details>
+        <details class="adv model-cache-section">
+          <summary>AI 离线包 · 抠图 / 找图模型下载</summary>
+          <div class="d-body">
+            <div class="model-cache">
+              <div id="modelCacheStatus">正在检查 AI 离线包…</div>
+              <div id="modelCacheHint" class="export-note">基础调色不需要下载 AI 模型。出门前可在 Wi‑Fi 下下载自动抠图离线包。</div>
+              <div id="pwaInstallTip" class="export-note" hidden></div>
+              <button id="btnPwaInstall" class="small" hidden>安装为应用（防止系统清除离线模型）</button>
+              <button id="btnCacheModels" class="small">下载自动抠图离线包（约 85MB）</button>
+              <button id="btnCacheSam" class="small">下载 SAM 高质量兜底包（约 38MB）</button>
+              <button id="btnCacheMatch" class="small">下载找图匹配离线包（约 21MB）</button>
+              <button id="btnTestModelDownload" class="small">检测模型下载线路</button>
+              <div id="modelDownloadProbe" class="download-probe" hidden></div>
+              <button id="btnClearModelCache" class="small">删除 AI 离线包</button>
+              <button id="btnExportDiagnostics" class="small">导出诊断信息（排错用）</button>
+              <div id="deviceStatus" class="export-note"></div>
+            </div>
+          </div>
+        </details>
+      </div>
+    </section>
+    </div><!-- /col-left -->
 
     <!-- 中：预览区 -->
     <section class="panel preview">
@@ -156,7 +234,8 @@
       </div>
     </section>
 
-    <!-- 右：调整与导出 -->
+    <div class="col col-right">
+    <!-- 右：调整 -->
     <section class="panel controls">
       <!-- 调色 -->
       <div class="sec">
@@ -267,82 +346,9 @@
           </div>
         </div>
       </details>
-
-      <!-- 导出 -->
-      <div class="sec">
-        <div class="sec-title">导出</div>
-        <div class="actions">
-          <button id="btnOpenExportHub" class="primary" disabled>选择导出方式</button>
-          <div hidden>
-            <button id="btnExportImg" disabled>导出调色图</button>
-            <button id="btnShareImg" hidden>保存到照片 / 分享</button>
-            <button id="btnExportCompare" disabled>导出对比图</button>
-            <button id="btnExportWipe" disabled>导出滑动对比动图</button>
-            <button id="btnExportMorph" disabled>导出动画→实景 GIF</button>
-            <button id="btnExportApng" disabled>导出高清动图 APNG（全彩）</button>
-          </div>
-        </div>
-        <input type="file" id="batchFiles" accept="image/jpeg,image/png,image/webp,.heic,.heif,.cr2,.cr3,.nef,.arw,.dng,.orf,.rw2,.raf,.pef,.srw" multiple hidden />
-        <button id="btnBatchExport" disabled hidden>批量套用当前风格并导出</button>
-        <div class="export-note">在导出面板中预览并选择需要的格式；缩略图即时生成，实际文件按选择后才开始制作。</div>
-        <details class="adv">
-          <summary>更多导出与预设 · 布局 / LUT / 预设</summary>
-          <div class="d-body">
-            <div class="ctrl-group">
-              <label>对比布局</label>
-              <select id="layout">
-                <option value="updown">上下对比（动画 / 实景）</option>
-                <option value="leftright">左右对比</option>
-                <option value="triple">三联（动画 · 原图 · 调色）</option>
-                <option value="postcard">巡礼卡片（此处 · 彼处）</option>
-              </select>
-              <button id="btnExportCompareLayout" class="primary" disabled hidden>按此布局导出对比图</button>
-            </div>
-            <div class="ctrl-group compare-meta">
-              <label>卡片标题与地点（可选）</label>
-              <input id="compareTitle" maxlength="48" placeholder="例如：摇曳露营△ · 伊豆" />
-              <input id="comparePlace" maxlength="80" placeholder="地点；照片含 GPS 时会自动附上坐标" />
-            </div>
-            <button id="btnExportLut" disabled hidden>导出高精度 .cube LUT</button>
-            <div class="export-note">65³ LUT 含影调/色彩/饱和度；不含天空分区与辉光。</div>
-            <div class="ctrl-group preset-box">
-              <label>风格预设（保存在本机）</label>
-              <div class="preset-row">
-                <select id="presetSelect"><option value="">选择预设…</option></select>
-                <button id="btnPresetApply" class="small">应用</button>
-              </div>
-              <div class="preset-row">
-                <input id="presetName" maxlength="30" placeholder="例如：摇曳露营·伊豆" />
-                <button id="btnPresetSave" class="small">保存</button>
-                <button id="btnPresetDelete" class="small" disabled>删除</button>
-              </div>
-              <div class="export-note">当前参数会自动恢复；图片不会写入浏览器存储。</div>
-            </div>
-          </div>
-        </details>
-        <details class="adv model-cache-section">
-          <summary>AI 离线包 · 抠图 / 找图模型下载</summary>
-          <div class="d-body">
-            <div class="model-cache">
-              <div id="modelCacheStatus">正在检查 AI 离线包…</div>
-              <div id="modelCacheHint" class="export-note">基础调色不需要下载 AI 模型。出门前可在 Wi‑Fi 下下载自动抠图离线包。</div>
-              <div id="pwaInstallTip" class="export-note" hidden></div>
-              <button id="btnPwaInstall" class="small" hidden>安装为应用（防止系统清除离线模型）</button>
-              <button id="btnCacheModels" class="small">下载自动抠图离线包（约 85MB）</button>
-              <button id="btnCacheSam" class="small">下载 SAM 高质量兜底包（约 38MB）</button>
-              <button id="btnCacheMatch" class="small">下载找图匹配离线包（约 21MB）</button>
-              <button id="btnTestModelDownload" class="small">检测模型下载线路</button>
-              <div id="modelDownloadProbe" class="download-probe" hidden></div>
-              <button id="btnClearModelCache" class="small">删除 AI 离线包</button>
-              <button id="btnExportDiagnostics" class="small">导出诊断信息（排错用）</button>
-              <div id="deviceStatus" class="export-note"></div>
-            </div>
-          </div>
-        </details>
-      </div>
-
-      <div class="status" id="status">等待上传…</div>
     </section>
+    <div class="status" id="status">等待上传…</div>
+    </div><!-- /col-right -->
   </main>
   </div>
 

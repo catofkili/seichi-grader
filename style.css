@@ -109,6 +109,9 @@ body {
   padding: 14px calc(14px + env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left));
   min-height: 0;
 }
+/* 桌面端：左右两列各用一个包裹容器独立堆叠，高度互不牵制，两侧自然等长。
+   三个网格子项（col-left / preview / col-right）恰好自动落入三列。 */
+.col { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -443,6 +446,14 @@ button.primary {
 
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
+  /* 移动端：溶解左右包裹容器，让所有面板回到单列线性流；再用 order 还原
+     原顺序（素材→预览→调色角色→导出模型→状态），移动端布局与之前完全一致。 */
+  .col { display: contents; }
+  .panel.inputs { order: 1; }
+  .panel.preview { order: 2; }
+  .panel.controls { order: 3; }
+  .panel.exports { order: 4; }
+  .status { order: 5; }
   .compare { min-height: 320px; }
 }
 
