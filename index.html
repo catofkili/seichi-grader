@@ -424,17 +424,20 @@
 
   <div id="entryNotice" class="entry-notice" hidden role="dialog" aria-modal="true" aria-labelledby="entryNoticeTitle">
     <div class="entry-notice-dialog">
-      <h2 id="entryNoticeTitle">使用前小贴士</h2>
-      <ul class="entry-notice-list">
-        <li><b>内地下载模型慢？</b>模型走海外节点，直连时快时慢。建议挂梯子并选<b>日本节点</b>，实测速度明显更稳更快。基础调色不下模型也能用。</li>
-        <li><b>强烈建议「安装为应用」。</b>安装后模型<b>永久保存在本机</b>，不会被系统几天后清掉；也能像 App 一样从主屏幕一键打开、断网可用。只需下载一次。</li>
-      </ul>
+      <div class="entry-notice-head">
+        <span class="entry-notice-badge">公告</span>
+        <h2 id="entryNoticeTitle">使用须知</h2>
+      </div>
+      <ol class="entry-notice-list">
+        <li>模型文件由海外节点分发，内地直连速度不稳定。建议连接代理（日本节点为佳）后再下载。仅使用基础调色功能时无需下载模型。</li>
+        <li>建议将本站安装为应用。安装后已下载的离线模型将持久保留于本机，不受系统定期清理影响，并可从主屏幕启动、离线使用；模型仅需下载一次。</li>
+      </ol>
       <div id="entryNoticeIosSteps" class="entry-notice-ios" hidden>
-        <b>iPhone 安装方法：</b>点 Safari 底部中间的「分享」<span aria-hidden="true">↑</span> → 下滑选「添加到主屏幕」→ 右上角「添加」。之后从主屏幕图标进入即可。
+        iPhone 安装：点按 Safari 底部「分享」，选择「添加到主屏幕」。
       </div>
       <div class="entry-notice-actions">
         <button id="btnNoticeInstall" class="small primary" hidden>安装为应用</button>
-        <button id="btnNoticeClose" class="small">知道了</button>
+        <button id="btnNoticeClose" class="small">我已知悉</button>
       </div>
     </div>
   </div>
